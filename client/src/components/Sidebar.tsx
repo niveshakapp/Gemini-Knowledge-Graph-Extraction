@@ -1,13 +1,14 @@
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
-import { 
-  LayoutDashboard, 
-  PlusCircle, 
-  BarChart3, 
-  Factory, 
-  Key, 
-  Settings, 
-  Network, 
+import {
+  LayoutDashboard,
+  PlusCircle,
+  BarChart3,
+  Factory,
+  Key,
+  ListTodo,
+  Settings,
+  Network,
   TerminalSquare,
   LogOut
 } from "lucide-react";
@@ -16,6 +17,7 @@ import { useLogout } from "@/hooks/use-auth";
 const menuItems = [
   { icon: LayoutDashboard, label: "Overview", href: "/" },
   { icon: PlusCircle, label: "Add Task", href: "/add-task" },
+  { icon: ListTodo, label: "Queue", href: "/queue" },
   { icon: BarChart3, label: "Stocks", href: "/stocks" },
   { icon: Factory, label: "Industries", href: "/industries" },
   { icon: Key, label: "Gemini Accounts", href: "/accounts" },

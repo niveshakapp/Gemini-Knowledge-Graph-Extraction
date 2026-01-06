@@ -1,14 +1,32 @@
-import { useStocks, useIndustries, useQueue, useKGs } from "@/hooks/use-dashboard-data";
+import { useStocks, useIndustries, useQueue, useKGs, useQueueControl, useConfig } from "@/hooks/use-dashboard-data";
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/StatCard";
-import { BarChart3, Factory, Layers, Network, Zap } from "lucide-react";
+import { BarChart3, Factory, Layers, Network, Zap, Play, Pause } from "lucide-react";
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Overview() {
   const { data: stocks, isLoading: loadingStocks } = useStocks();
   const { data: industries, isLoading: loadingIndustries } = useIndustries();
   const { data: queue, isLoading: loadingQueue } = useQueue();
   const { data: kgs, isLoading: loadingKGs } = useKGs();
+  const { data: configs } = useConfig();
+  const queueControlMutation = useQueueControl();
+  const { toast } = useToast();
+
+  const queueEnabled = configs?.find(c => c.configKey === 'queue_processing_enabled')?.configValue === 'true';
+
+  const handleQueueControl = async (action: 'start' | 'stop') => {
+    try {
+      await queueControlMutation.mutateAsync(action);
+      toast({
+        title: action === 'start' ? 'Queue Started' : 'Queue Stopped',
+        description: action === 'start' ? 'Processing will begin shortly' : 'Processing has been paused'
+      });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  };
 
   // Mock data for the chart since we don't have historical data points in this simplified schema
   const chartData = [
@@ -26,10 +44,24 @@ export default function Overview() {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
-      <PageHeader 
-        title="Command Center" 
-        description="Real-time operational overview of the Knowledge Graph Extraction Engine." 
-      />
+      <div className="flex items-center justify-between">
+        <PageHeader
+          title="Command Center"
+          description="Real-time operational overview of the Knowledge Graph Extraction Engine."
+        />
+        <div className="flex items-center gap-3">
+          <div className={`px-3 py-1.5 rounded-full text-xs font-bold border ${queueEnabled && processingTasks > 0 ? 'bg-green-500/10 text-green-500 border-green-500/20' : 'bg-muted text-muted-foreground border-border'}`}>
+            {queueEnabled && processingTasks > 0 ? '● PROCESSING' : '○ IDLE'}
+          </div>
+          <button
+            onClick={() => handleQueueControl(queueEnabled ? 'stop' : 'start')}
+            disabled={queueControlMutation.isPending}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${queueEnabled ? 'bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500/20' : 'bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20'}`}
+          >
+            {queueEnabled ? <><Pause className="w-4 h-4" /> Stop Queue</> : <><Play className="w-4 h-4" /> Start Queue</>}
+          </button>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard 
