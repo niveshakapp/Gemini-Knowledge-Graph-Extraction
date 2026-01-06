@@ -61,9 +61,9 @@ class QueueProcessor {
         });
 
         try {
-          // Initialize scraper and process
-          await this.scraper.init();
-          // Real login and extraction would go here
+          // Initialize scraper with API key and model
+          await this.scraper.init(account.passwordEncrypted, task.geminiModel || 'gemini-1.5-pro');
+          // Extract using Gemini API
           const result = await this.scraper.extract(task.promptText);
           
           // Save result

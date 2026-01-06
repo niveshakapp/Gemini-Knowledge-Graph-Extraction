@@ -1,53 +1,74 @@
-import { chromium } from "playwright-extra";
-import stealth from "puppeteer-extra-plugin-stealth";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export class GeminiScraper {
-  private browser: any = null;
-  private context: any = null;
+  private genAI: GoogleGenerativeAI | null = null;
+  private model: any = null;
+  private apiKey: string = "";
 
-  async init() {
-    chromium.use(stealth());
-    this.browser = await chromium.launch({ headless: true });
-    this.context = await this.browser.newContext({
-      viewport: { width: 1920, height: 1080 },
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
-    });
-  }
-
-  async login(email: string, password: string) {
-    if (!this.context) throw new Error("Scraper not initialized");
-    const page = await this.context.newPage();
-    await page.goto("https://gemini.google.com/app", { waitUntil: 'networkidle' });
-    
-    // Simplistic mock for login - real implementation needs complex selector handling
-    // and potentially manual cookie injection if 2FA is active
-    console.log(`Logging into Gemini with ${email}...`);
-    await page.close();
+  async init(apiKey: string, modelName: string = "gemini-1.5-pro") {
+    this.apiKey = apiKey;
+    this.genAI = new GoogleGenerativeAI(apiKey);
+    this.model = this.genAI.getGenerativeModel({ model: modelName });
   }
 
   async extract(prompt: string): Promise<any> {
-    if (!this.context) throw new Error("Scraper not initialized");
-    const page = await this.context.newPage();
-    await page.goto("https://gemini.google.com/app");
-    
-    // Simulate interaction
-    await page.fill('textarea[placeholder*="prompt"]', prompt);
-    await page.keyboard.press('Enter');
-    
-    // Wait for response - simplified
-    await page.waitForTimeout(5000);
-    
-    const result = {
-      nodes: [{ id: 1, label: "Entity" }],
-      edges: [],
-      raw: "Mock Gemini response content"
-    };
+    if (!this.model) {
+      throw new Error("Scraper not initialized. Call init() first.");
+    }
 
-    await page.close();
-    return result;
+    try {
+      const result = await this.model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
+
+      // Try to parse as JSON if it looks like JSON
+      let parsedData;
+      try {
+        // Extract JSON from markdown code blocks if present
+        const jsonMatch = text.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/);
+        if (jsonMatch) {
+          parsedData = JSON.parse(jsonMatch[1]);
+        } else if (text.trim().startsWith('{')) {
+          parsedData = JSON.parse(text);
+        } else {
+          // If not JSON, structure the text response
+          parsedData = {
+            raw: text,
+            nodes: this.extractEntitiesFromText(text),
+            edges: []
+          };
+        }
+      } catch (parseError) {
+        // If parsing fails, return structured text
+        parsedData = {
+          raw: text,
+          nodes: this.extractEntitiesFromText(text),
+          edges: []
+        };
+      }
+
+      return parsedData;
+    } catch (error: any) {
+      // Check for rate limiting
+      if (error.message?.includes('429') || error.message?.toLowerCase().includes('quota')) {
+        throw new Error('Rate limit exceeded. Please try again later.');
+      }
+      throw error;
+    }
+  }
+
+  private extractEntitiesFromText(text: string): any[] {
+    // Simple entity extraction - split by lines and create nodes
+    const lines = text.split('\n').filter(line => line.trim().length > 0);
+    return lines.slice(0, 10).map((line, index) => ({
+      id: index + 1,
+      label: line.trim().substring(0, 100)
+    }));
   }
 
   async close() {
-    if (this.browser) await this.browser.close();
+    // No cleanup needed for API-based approach
+    this.genAI = null;
+    this.model = null;
   }
 }
