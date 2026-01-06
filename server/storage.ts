@@ -4,7 +4,7 @@ import {
   type Stock, type Industry, type GeminiAccount, type QueueItem, type KnowledgeGraph, type SystemConfig, type ActivityLog,
   type InsertStock, type InsertIndustry, type InsertAccount, type InsertQueue, type InsertConfig
 } from "@shared/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, or, lt } from "drizzle-orm";
 
 export interface IStorage {
   // Stocks
@@ -19,16 +19,22 @@ export interface IStorage {
   getAccounts(): Promise<GeminiAccount[]>;
   createAccount(account: InsertAccount): Promise<GeminiAccount>;
   deleteAccount(id: number): Promise<void>;
+  updateAccount(id: number, updates: Partial<GeminiAccount>): Promise<GeminiAccount>;
+  getAvailableAccount(): Promise<GeminiAccount | undefined>;
   
   // Queue
   getQueue(): Promise<QueueItem[]>;
+  getPendingQueueItem(): Promise<QueueItem | undefined>;
   createQueueItem(item: InsertQueue): Promise<QueueItem>;
+  updateQueueItem(id: number, updates: Partial<QueueItem>): Promise<QueueItem>;
   
   // KGs
   getKGs(): Promise<KnowledgeGraph[]>;
+  createKG(kg: any): Promise<KnowledgeGraph>;
   
   // Config
   getConfig(): Promise<SystemConfig[]>;
+  getConfigValue(key: string): Promise<string | undefined>;
   updateConfig(key: string, value: string): Promise<SystemConfig | undefined>;
   
   // Logs
@@ -71,8 +77,41 @@ export class DatabaseStorage implements IStorage {
     await db.delete(geminiAccounts).where(eq(geminiAccounts.id, id));
   }
 
+  async updateAccount(id: number, updates: Partial<GeminiAccount>): Promise<GeminiAccount> {
+    const [updated] = await db.update(geminiAccounts)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(geminiAccounts.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getAvailableAccount(): Promise<GeminiAccount | undefined> {
+    const now = new Date();
+    const [account] = await db.select()
+      .from(geminiAccounts)
+      .where(and(
+        eq(geminiAccounts.isActive, true),
+        eq(geminiAccounts.isCurrentlyInUse, false),
+        or(
+          eq(geminiAccounts.rateLimitedUntil, null as any),
+          lt(geminiAccounts.rateLimitedUntil, now)
+        )
+      ))
+      .limit(1);
+    return account;
+  }
+
   async getQueue(): Promise<QueueItem[]> {
     return await db.select().from(extractionQueue).orderBy(desc(extractionQueue.priority), desc(extractionQueue.createdAt));
+  }
+
+  async getPendingQueueItem(): Promise<QueueItem | undefined> {
+    const [item] = await db.select()
+      .from(extractionQueue)
+      .where(eq(extractionQueue.status, 'queued'))
+      .orderBy(desc(extractionQueue.priority), desc(extractionQueue.createdAt))
+      .limit(1);
+    return item;
   }
 
   async createQueueItem(item: InsertQueue): Promise<QueueItem> {
@@ -80,12 +119,30 @@ export class DatabaseStorage implements IStorage {
     return newItem;
   }
 
+  async updateQueueItem(id: number, updates: Partial<QueueItem>): Promise<QueueItem> {
+    const [updated] = await db.update(extractionQueue)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(extractionQueue.id, id))
+      .returning();
+    return updated;
+  }
+
   async getKGs(): Promise<KnowledgeGraph[]> {
     return await db.select().from(knowledgeGraphs).orderBy(desc(knowledgeGraphs.extractedAt));
   }
 
+  async createKG(kg: any): Promise<KnowledgeGraph> {
+    const [newItem] = await db.insert(knowledgeGraphs).values(kg).returning();
+    return newItem;
+  }
+
   async getConfig(): Promise<SystemConfig[]> {
     return await db.select().from(systemConfig);
+  }
+
+  async getConfigValue(key: string): Promise<string | undefined> {
+    const [conf] = await db.select().from(systemConfig).where(eq(systemConfig.configKey, key));
+    return conf?.configValue || undefined;
   }
 
   async updateConfig(key: string, value: string): Promise<SystemConfig | undefined> {
@@ -115,25 +172,6 @@ export class DatabaseStorage implements IStorage {
 
     for (const conf of defaults) {
       await db.insert(systemConfig).values(conf).onConflictDoNothing().execute();
-    }
-
-    // Seed dummy stocks
-    if ((await this.getStocks()).length === 0) {
-      await this.createStock({ symbol: 'AAPL', companyName: 'Apple Inc.', industry: 'Technology', status: 'completed' });
-      await this.createStock({ symbol: 'MSFT', companyName: 'Microsoft Corp.', industry: 'Technology', status: 'processing' });
-      await this.createStock({ symbol: 'GOOGL', companyName: 'Alphabet Inc.', industry: 'Technology', status: 'pending' });
-    }
-    
-    // Seed dummy industries
-    if ((await this.getIndustries()).length === 0) {
-        await this.createIndustry({ industryName: 'Technology', sector: 'Information Technology', status: 'completed' });
-        await this.createIndustry({ industryName: 'Healthcare', sector: 'Health Care', status: 'pending' });
-    }
-
-    // Seed dummy accounts
-    if ((await this.getAccounts()).length === 0) {
-        await this.createAccount({ accountName: 'Account 1', email: 'acc1@gmail.com', passwordEncrypted: 'pass', isActive: true });
-        await this.createAccount({ accountName: 'Account 2', email: 'acc2@gmail.com', passwordEncrypted: 'pass', isActive: false });
     }
   }
 }

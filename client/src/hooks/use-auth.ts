@@ -37,6 +37,7 @@ export function useLogin() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.auth.me.path] });
+      window.location.href = "/";
     },
   });
 }

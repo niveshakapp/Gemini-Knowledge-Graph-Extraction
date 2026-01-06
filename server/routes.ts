@@ -12,22 +12,31 @@ const SessionStore = MemoryStore(session);
 const ADMIN_EMAIL = "niveshak.connect@gmail.com";
 const ADMIN_PASSWORD = "v7F50PJa8NbBin";
 
+import { queueProcessor } from "./queue_processor";
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
   
+  // Start queue processor
+  queueProcessor.start();
   // Session Middleware
+  app.set("trust proxy", 1);
   app.use(session({
     secret: process.env.SESSION_SECRET || 'gemini_extractor_secret',
     resave: false,
     saveUninitialized: false,
+    name: "sid",
     store: new SessionStore({
       checkPeriod: 86400000 // prune expired entries every 24h
     }),
     cookie: { 
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
-      secure: app.get('env') === 'production' 
+      secure: false, // Must be false on Replit unless custom domain with SSL is used
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/"
     }
   }));
 
@@ -133,8 +142,15 @@ export async function registerRoutes(
   });
 
   app.post(api.queue.control.path, requireAuth, async (req, res) => {
-    // Mock control for now
-    res.json({ status: req.body.action === 'start' ? 'processing' : 'stopped' });
+    const { action } = req.body;
+    if (action === 'start') {
+      await storage.updateConfig('queue_processing_enabled', 'true');
+      queueProcessor.start();
+    } else {
+      await storage.updateConfig('queue_processing_enabled', 'false');
+      queueProcessor.stop();
+    }
+    res.json({ status: action === 'start' ? 'processing' : 'stopped' });
   });
 
   app.get(api.kgs.list.path, requireAuth, async (req, res) => {
