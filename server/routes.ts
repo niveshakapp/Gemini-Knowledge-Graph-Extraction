@@ -114,7 +114,8 @@ export async function registerRoutes(
   app.post(api.accounts.create.path, requireAuth, async (req, res) => {
     try {
       const input = api.accounts.create.input.parse(req.body);
-      const data = await storage.createAccount(input);
+      // Ensure isActive is set to true by default for new accounts
+      const data = await storage.createAccount({ ...input, isActive: true });
       res.status(201).json(data);
     } catch (e) {
       res.status(400).json({ message: "Validation error" });
@@ -174,8 +175,9 @@ export async function registerRoutes(
     res.json(data);
   });
 
-  // Seed default data
+  // Seed default data and fix account statuses
   await storage.seedDefaultConfig();
+  await storage.fixAccountsActiveStatus();
 
   return httpServer;
 }

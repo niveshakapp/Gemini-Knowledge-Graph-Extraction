@@ -10,37 +10,38 @@ export interface IStorage {
   // Stocks
   getStocks(): Promise<Stock[]>;
   createStock(stock: InsertStock): Promise<Stock>;
-  
+
   // Industries
   getIndustries(): Promise<Industry[]>;
   createIndustry(industry: InsertIndustry): Promise<Industry>;
-  
+
   // Accounts
   getAccounts(): Promise<GeminiAccount[]>;
   createAccount(account: InsertAccount): Promise<GeminiAccount>;
   deleteAccount(id: number): Promise<void>;
   updateAccount(id: number, updates: Partial<GeminiAccount>): Promise<GeminiAccount>;
   getAvailableAccount(): Promise<GeminiAccount | undefined>;
-  
+  fixAccountsActiveStatus(): Promise<void>;
+
   // Queue
   getQueue(): Promise<QueueItem[]>;
   getPendingQueueItem(): Promise<QueueItem | undefined>;
   createQueueItem(item: InsertQueue): Promise<QueueItem>;
   updateQueueItem(id: number, updates: Partial<QueueItem>): Promise<QueueItem>;
-  
+
   // KGs
   getKGs(): Promise<KnowledgeGraph[]>;
   createKG(kg: any): Promise<KnowledgeGraph>;
-  
+
   // Config
   getConfig(): Promise<SystemConfig[]>;
   getConfigValue(key: string): Promise<string | undefined>;
   updateConfig(key: string, value: string): Promise<SystemConfig | undefined>;
-  
+
   // Logs
   getLogs(): Promise<ActivityLog[]>;
   createLog(log: any): Promise<ActivityLog>;
-  
+
   // Seeding
   seedDefaultConfig(): Promise<void>;
 }
@@ -99,6 +100,13 @@ export class DatabaseStorage implements IStorage {
       ))
       .limit(1);
     return account;
+  }
+
+  async fixAccountsActiveStatus(): Promise<void> {
+    // Update all accounts to ensure isActive is set to true if not already set
+    await db.update(geminiAccounts)
+      .set({ isActive: true, updatedAt: new Date() })
+      .execute();
   }
 
   async getQueue(): Promise<QueueItem[]> {

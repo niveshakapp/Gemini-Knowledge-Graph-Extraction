@@ -15,6 +15,7 @@ import AddTask from "@/pages/AddTask";
 import StocksList from "@/pages/StocksList";
 import IndustriesList from "@/pages/StocksList"; // Reusing for now as they are similar tables, normally separate
 import AccountsPage from "@/pages/AccountsPage";
+import QueuePage from "@/pages/QueuePage";
 import KGsPage from "@/pages/KGsPage";
 import LogsPage from "@/pages/LogsPage";
 import ConfigPage from "@/pages/ConfigPage";
@@ -73,6 +74,9 @@ function Router() {
       </Route>
       <Route path="/accounts">
         <ProtectedLayout><AccountsPage /></ProtectedLayout>
+      </Route>
+      <Route path="/queue">
+        <ProtectedLayout><QueuePage /></ProtectedLayout>
       </Route>
       <Route path="/kgs">
         <ProtectedLayout><KGsPage /></ProtectedLayout>
