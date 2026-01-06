@@ -42,7 +42,7 @@ Focus on:
         geminiModel: 'gemini-1.5-pro'
       });
       toast({ title: "Task Queued", description: `Extraction for ${name} has been added to the queue.` });
-      setLocation("/overview");
+      setLocation("/");
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     }

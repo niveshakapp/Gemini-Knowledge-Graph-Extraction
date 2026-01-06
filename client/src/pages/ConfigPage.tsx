@@ -1,7 +1,8 @@
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { api, buildUrl } from "@shared/routes";
+import { useMutation } from "@tanstack/react-query";
+import { api } from "@shared/routes";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useConfig } from "@/hooks/use-dashboard-data";
 import { 
   Card, 
   CardContent, 
@@ -25,9 +26,7 @@ import { useState, useEffect } from "react";
 
 export default function ConfigPage() {
   const { toast } = useToast();
-  const { data: configs, isLoading } = useQuery({
-    queryKey: [api.config.list.path]
-  });
+  const { data: configs, isLoading } = useConfig();
 
   const updateConfigMutation = useMutation({
     mutationFn: async ({ key, value }: { key: string, value: string }) => {

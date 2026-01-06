@@ -101,7 +101,7 @@ export const activityLogs = pgTable("activity_logs", {
 // Schemas
 export const insertStockSchema = createInsertSchema(stocks).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertIndustrySchema = createInsertSchema(industries).omit({ id: true, createdAt: true, updatedAt: true });
-export const insertAccountSchema = createInsertSchema(geminiAccounts).omit({ id: true, createdAt: true, updatedAt: true, lastUsedAt: true, totalExtractionsCount: true, successCount: true, failureCount: true, lastError: true, rateLimitedUntil: true, isCurrentlyInUse: true });
+export const insertAccountSchema = createInsertSchema(geminiAccounts).omit({ id: true, createdAt: true, updatedAt: true, lastUsedAt: true, totalExtractionsCount: true, successCount: true, failureCount: true, lastError: true, rateLimitedUntil: true, isCurrentlyInUse: true, isActive: true });
 export const insertQueueSchema = createInsertSchema(extractionQueue).omit({ id: true, createdAt: true, updatedAt: true, startedAt: true, completedAt: true, retryCount: true, status: true, errorMessage: true, assignedAccountId: true });
 export const insertConfigSchema = createInsertSchema(systemConfig).omit({ id: true, updatedAt: true });
 
