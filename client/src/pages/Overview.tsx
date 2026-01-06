@@ -4,6 +4,7 @@ import { StatCard } from "@/components/StatCard";
 import { BarChart3, Factory, Layers, Network, Zap, Play, Pause } from "lucide-react";
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import { useToast } from "@/hooks/use-toast";
+import React from "react";
 
 export default function Overview() {
   const { data: stocks, isLoading: loadingStocks } = useStocks();
@@ -28,16 +29,25 @@ export default function Overview() {
     }
   };
 
-  // Mock data for the chart since we don't have historical data points in this simplified schema
-  const chartData = [
-    { name: 'Mon', extractions: 4 },
-    { name: 'Tue', extractions: 7 },
-    { name: 'Wed', extractions: 5 },
-    { name: 'Thu', extractions: 12 },
-    { name: 'Fri', extractions: 9 },
-    { name: 'Sat', extractions: 15 },
-    { name: 'Sun', extractions: 11 },
-  ];
+  // Generate chart data from actual KGs
+  const chartData = React.useMemo(() => {
+    if (!kgs || kgs.length === 0) {
+      return Array.from({ length: 7 }, (_, i) => ({
+        name: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][i],
+        extractions: 0
+      }));
+    }
+    // Group KGs by day of week
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const counts = new Array(7).fill(0);
+    kgs.forEach(kg => {
+      if (kg.extractedAt) {
+        const day = new Date(kg.extractedAt).getDay();
+        counts[day]++;
+      }
+    });
+    return days.map((name, i) => ({ name, extractions: counts[i] }));
+  }, [kgs]);
 
   const pendingTasks = queue?.filter(q => q.status === 'queued' || q.status === 'processing').length || 0;
   const processingTasks = queue?.filter(q => q.status === 'processing').length || 0;

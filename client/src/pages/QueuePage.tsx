@@ -32,9 +32,16 @@ export default function QueuePage() {
 
   const handleSavePriority = async (id: number) => {
     try {
-      // TODO: Add API endpoint to update queue item priority
+      const res = await fetch(`/api/queue/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ priority: editPriority })
+      });
+      if (!res.ok) throw new Error('Failed to update priority');
       toast({ title: "Priority Updated", description: "Task priority has been updated" });
       setEditingId(null);
+      // Refresh queue data
+      window.location.reload();
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     }
@@ -43,8 +50,11 @@ export default function QueuePage() {
   const handleDelete = async (id: number) => {
     if (confirm("Are you sure you want to remove this task from the queue?")) {
       try {
-        // TODO: Add API endpoint to delete queue item
+        const res = await fetch(`/api/queue/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Failed to delete task');
         toast({ title: "Task Removed", description: "Task has been removed from queue" });
+        // Refresh queue data
+        window.location.reload();
       } catch (err: any) {
         toast({ title: "Error", description: err.message, variant: "destructive" });
       }

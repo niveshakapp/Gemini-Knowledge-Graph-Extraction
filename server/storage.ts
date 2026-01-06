@@ -28,6 +28,7 @@ export interface IStorage {
   getPendingQueueItem(): Promise<QueueItem | undefined>;
   createQueueItem(item: InsertQueue): Promise<QueueItem>;
   updateQueueItem(id: number, updates: Partial<QueueItem>): Promise<QueueItem>;
+  deleteQueueItem(id: number): Promise<void>;
 
   // KGs
   getKGs(): Promise<KnowledgeGraph[]>;
@@ -103,9 +104,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async fixAccountsActiveStatus(): Promise<void> {
-    // Update all accounts to ensure isActive is set to true if not already set
+    // Update all accounts to ensure isActive is true, isCurrentlyInUse is false, and rateLimitedUntil is null
     await db.update(geminiAccounts)
-      .set({ isActive: true, updatedAt: new Date() })
+      .set({
+        isActive: true,
+        isCurrentlyInUse: false,
+        rateLimitedUntil: null,
+        updatedAt: new Date()
+      })
       .execute();
   }
 
@@ -133,6 +139,10 @@ export class DatabaseStorage implements IStorage {
       .where(eq(extractionQueue.id, id))
       .returning();
     return updated;
+  }
+
+  async deleteQueueItem(id: number): Promise<void> {
+    await db.delete(extractionQueue).where(eq(extractionQueue.id, id));
   }
 
   async getKGs(): Promise<KnowledgeGraph[]> {

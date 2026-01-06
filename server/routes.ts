@@ -151,6 +151,13 @@ export async function registerRoutes(
     try {
       const input = api.queue.create.input.parse(req.body);
       const data = await storage.createQueueItem(input);
+      await storage.createLog({
+        logLevel: 'info',
+        logMessage: `Task added to queue: ${data.entityName} (${data.entityType})`,
+        entityType: data.entityType,
+        entityId: data.entityId,
+        queueTaskId: data.id
+      });
       res.status(201).json(data);
     } catch (e) {
       res.status(400).json({ message: "Validation error" });
@@ -162,11 +169,69 @@ export async function registerRoutes(
     if (action === 'start') {
       await storage.updateConfig('queue_processing_enabled', 'true');
       queueProcessor.start();
+      await storage.createLog({
+        logLevel: 'info',
+        logMessage: 'Queue processing started'
+      });
     } else {
       await storage.updateConfig('queue_processing_enabled', 'false');
       queueProcessor.stop();
+      await storage.createLog({
+        logLevel: 'info',
+        logMessage: 'Queue processing stopped'
+      });
     }
     res.json({ status: action === 'start' ? 'processing' : 'stopped' });
+  });
+
+  // Delete queue item
+  app.delete('/api/queue/:id', requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      await storage.deleteQueueItem(id);
+      await storage.createLog({
+        logLevel: 'info',
+        logMessage: `Task deleted from queue (ID: ${id})`
+      });
+      res.sendStatus(200);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Update queue item (for priority editing)
+  app.patch('/api/queue/:id', requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const updates = req.body;
+      const updated = await storage.updateQueueItem(id, updates);
+      await storage.createLog({
+        logLevel: 'info',
+        logMessage: `Task updated in queue: ${updated.entityName}`
+      });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Toggle account active status
+  app.patch('/api/accounts/:id/toggle', requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const account = (await storage.getAccounts()).find(a => a.id === id);
+      if (!account) {
+        return res.status(404).json({ message: 'Account not found' });
+      }
+      const updated = await storage.updateAccount(id, { isActive: !account.isActive });
+      await storage.createLog({
+        logLevel: 'info',
+        logMessage: `Account ${updated.accountName} ${updated.isActive ? 'enabled' : 'disabled'}`
+      });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   app.get(api.kgs.list.path, requireAuth, async (req, res) => {
