@@ -127,6 +127,21 @@ export async function registerRoutes(
     res.sendStatus(200);
   });
 
+  // Endpoint to activate all accounts manually
+  app.post('/api/accounts/activate-all', requireAuth, async (req, res) => {
+    try {
+      await storage.fixAccountsActiveStatus();
+      const accounts = await storage.getAccounts();
+      await storage.createLog({
+        logLevel: 'success',
+        logMessage: `Activated ${accounts.length} Gemini accounts`
+      });
+      res.json({ message: 'All accounts activated', count: accounts.length });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get(api.queue.list.path, requireAuth, async (req, res) => {
     const data = await storage.getQueue();
     res.json(data);

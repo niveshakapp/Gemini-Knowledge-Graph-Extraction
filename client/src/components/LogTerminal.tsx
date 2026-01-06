@@ -11,6 +11,9 @@ interface LogTerminalProps {
 export function LogTerminal({ logs, height = "400px" }: LogTerminalProps) {
   const endRef = useRef<HTMLDivElement>(null);
 
+  // Reverse logs to show newest first
+  const sortedLogs = [...logs].reverse();
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
@@ -40,10 +43,10 @@ export function LogTerminal({ logs, height = "400px" }: LogTerminalProps) {
         className="flex-1 overflow-y-auto p-4 space-y-1 scrollbar-hide" 
         style={{ height }}
       >
-        {logs.length === 0 ? (
+        {sortedLogs.length === 0 ? (
           <div className="text-muted-foreground italic opacity-50">Waiting for system activity...</div>
         ) : (
-          logs.map((log) => (
+          sortedLogs.map((log) => (
             <div key={log.id} className="flex gap-3 hover:bg-white/5 p-0.5 rounded transition-colors">
               <span className="text-muted-foreground/50 shrink-0 select-none">
                 {log.createdAt ? format(new Date(log.createdAt), 'HH:mm:ss.SSS') : '--:--:--'}

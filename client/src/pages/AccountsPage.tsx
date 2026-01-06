@@ -2,18 +2,42 @@ import { useState } from "react";
 import { useAccounts, useCreateAccount, useDeleteAccount } from "@/hooks/use-dashboard-data";
 import { PageHeader } from "@/components/PageHeader";
 import { format } from "date-fns";
-import { Shield, Plus, Trash2, CheckCircle, XCircle } from "lucide-react";
+import { Shield, Plus, Trash2, CheckCircle, XCircle, Power } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"; // Assuming basic dialog exists or using manual overlay
 import { useToast } from "@/hooks/use-toast";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "@shared/routes";
 
 export default function AccountsPage() {
   const { data: accounts, isLoading } = useAccounts();
   const deleteMutation = useDeleteAccount();
   const createMutation = useCreateAccount();
   const { toast } = useToast();
-  
+  const queryClient = useQueryClient();
+
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [newAccount, setNewAccount] = useState({ accountName: "", email: "", passwordEncrypted: "" });
+
+  const activateAllMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch('/api/accounts/activate-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (!res.ok) throw new Error('Failed to activate accounts');
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: [api.accounts.list.path] });
+      toast({
+        title: "Accounts Activated",
+        description: `Successfully activated ${data.count} Gemini accounts`
+      });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  });
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,16 +60,27 @@ export default function AccountsPage() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      <PageHeader 
-        title="Gemini Accounts" 
-        description="Manage the pool of accounts used for API rotation and extraction." 
+      <PageHeader
+        title="Gemini Accounts"
+        description="Manage the pool of accounts used for API rotation and extraction."
         action={
-          <button 
-            onClick={() => setIsDialogOpen(true)}
-            className="bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2 rounded-lg font-medium shadow-lg shadow-primary/20 flex items-center gap-2 transition-all"
-          >
-            <Plus className="w-4 h-4" /> Add Account
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={() => activateAllMutation.mutate()}
+              disabled={activateAllMutation.isPending}
+              className="bg-green-500/10 hover:bg-green-500/20 text-green-500 border border-green-500/20 px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all"
+              title="Activate all accounts (fixes detection issues)"
+            >
+              <Power className="w-4 h-4" />
+              {activateAllMutation.isPending ? 'Activating...' : 'Activate All'}
+            </button>
+            <button
+              onClick={() => setIsDialogOpen(true)}
+              className="bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2 rounded-lg font-medium shadow-lg shadow-primary/20 flex items-center gap-2 transition-all"
+            >
+              <Plus className="w-4 h-4" /> Add Account
+            </button>
+          </div>
         }
       />
 
