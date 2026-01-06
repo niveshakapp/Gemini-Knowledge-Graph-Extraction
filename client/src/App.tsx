@@ -17,6 +17,7 @@ import IndustriesList from "@/pages/StocksList"; // Reusing for now as they are 
 import AccountsPage from "@/pages/AccountsPage";
 import KGsPage from "@/pages/KGsPage";
 import LogsPage from "@/pages/LogsPage";
+import ConfigPage from "@/pages/ConfigPage";
 import NotFound from "@/pages/not-found";
 
 function ProtectedLayout({ children }: { children: React.ReactNode }) {
@@ -80,9 +81,7 @@ function Router() {
         <ProtectedLayout><LogsPage /></ProtectedLayout>
       </Route>
       <Route path="/config">
-        <ProtectedLayout>
-          <div className="p-8 text-center text-muted-foreground">Configuration module coming in v2.1</div>
-        </ProtectedLayout>
+        <ProtectedLayout><ConfigPage /></ProtectedLayout>
       </Route>
 
       <Route component={NotFound} />
