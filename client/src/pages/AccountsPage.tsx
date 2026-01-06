@@ -58,6 +58,20 @@ export default function AccountsPage() {
     }
   };
 
+  const handleToggleActive = async (id: number) => {
+    try {
+      const res = await fetch(`/api/accounts/${id}/toggle`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (!res.ok) throw new Error('Failed to toggle account');
+      queryClient.invalidateQueries({ queryKey: [api.accounts.list.path] });
+      toast({ title: "Account Updated", description: "Account status has been changed" });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <PageHeader
@@ -169,16 +183,29 @@ export default function AccountsPage() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between pt-4 border-t border-border">
+              <div className="flex items-center justify-between pt-4 border-t border-border gap-2">
                 <span className="text-xs text-muted-foreground">
                   Last used: {account.lastUsedAt ? format(new Date(account.lastUsedAt), 'MMM d, HH:mm') : 'Never'}
                 </span>
-                <button 
-                  onClick={() => handleDelete(account.id)}
-                  className="text-muted-foreground hover:text-destructive transition-colors p-1"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleToggleActive(account.id)}
+                    className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                      account.isActive
+                        ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20'
+                        : 'bg-green-500/10 text-green-500 hover:bg-green-500/20'
+                    }`}
+                    title={account.isActive ? 'Disable account' : 'Enable account'}
+                  >
+                    {account.isActive ? 'Disable' : 'Enable'}
+                  </button>
+                  <button
+                    onClick={() => handleDelete(account.id)}
+                    className="text-muted-foreground hover:text-destructive transition-colors p-1"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
