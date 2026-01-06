@@ -4,7 +4,7 @@ import {
   type Stock, type Industry, type GeminiAccount, type QueueItem, type KnowledgeGraph, type SystemConfig, type ActivityLog,
   type InsertStock, type InsertIndustry, type InsertAccount, type InsertQueue, type InsertConfig
 } from "@shared/schema";
-import { eq, desc, and, or, lt } from "drizzle-orm";
+import { eq, desc, and, or, lt, isNull } from "drizzle-orm";
 
 export interface IStorage {
   // Stocks
@@ -95,7 +95,7 @@ export class DatabaseStorage implements IStorage {
         eq(geminiAccounts.isActive, true),
         eq(geminiAccounts.isCurrentlyInUse, false),
         or(
-          eq(geminiAccounts.rateLimitedUntil, null as any),
+          isNull(geminiAccounts.rateLimitedUntil),
           lt(geminiAccounts.rateLimitedUntil, now)
         )
       ))
