@@ -1,5 +1,7 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { storage } from "./storage";
+import * as fs from "fs";
+import * as path from "path";
 
 export class GeminiScraper {
   private browser: Browser | null = null;
@@ -8,18 +10,44 @@ export class GeminiScraper {
   private email: string = "";
   private password: string = "";
   private isLoggedIn: boolean = false;
+  private sessionDir: string = "";
 
   private async log(message: string, level: 'info' | 'success' | 'warning' | 'error' = 'info') {
-    console.log(`[${level.toUpperCase()}] ${message}`);
+    console.log(`[${level}] ${message}`);
     await storage.createLog({
       logLevel: level,
       logMessage: message
     });
   }
 
-  async init() {
+  private getSessionDir(email: string): string {
+    // Create a safe filename from email
+    const safeEmail = email.replace(/[^a-z0-9]/gi, '_');
+    return path.join('/tmp', `gemini-session-${safeEmail}`);
+  }
+
+  private async saveSession() {
+    if (!this.context || !this.sessionDir) return;
+
+    try {
+      await this.log(`💾 Saving browser session to ${this.sessionDir}`, 'info');
+      // Context is already created with storageState, cookies are saved automatically
+      await this.context.storageState({ path: path.join(this.sessionDir, 'state.json') });
+      await this.log('✓ Session saved successfully', 'success');
+    } catch (error: any) {
+      await this.log(`⚠️ Failed to save session: ${error.message}`, 'warning');
+    }
+  }
+
+  private async sessionExists(email: string): Promise<boolean> {
+    const sessionPath = path.join(this.getSessionDir(email), 'state.json');
+    return fs.existsSync(sessionPath);
+  }
+
+  async init(email: string = "") {
     try {
       await this.log("🚀 Initializing browser...", 'info');
+
       this.browser = await chromium.launch({
         headless: true,
         args: [
@@ -29,19 +57,49 @@ export class GeminiScraper {
           '--disable-accelerated-2d-canvas',
           '--no-first-run',
           '--no-zygote',
-          '--disable-gpu'
+          '--disable-gpu',
+          '--disable-blink-features=AutomationControlled'
         ]
       });
 
       await this.log("✓ Browser launched successfully", 'success');
 
-      this.context = await this.browser.newContext({
-        viewport: { width: 1280, height: 720 },
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      });
+      // Try to load existing session if email is provided
+      const hasSession = email ? await this.sessionExists(email) : false;
+
+      if (hasSession && email) {
+        this.sessionDir = this.getSessionDir(email);
+        const sessionPath = path.join(this.sessionDir, 'state.json');
+
+        await this.log(`🔄 Loading existing session from ${this.sessionDir}`, 'info');
+
+        this.context = await this.browser.newContext({
+          storageState: sessionPath,
+          viewport: { width: 1280, height: 720 },
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        });
+
+        await this.log('✓ Session loaded successfully', 'success');
+      } else {
+        if (email) {
+          this.sessionDir = this.getSessionDir(email);
+          // Create session directory if it doesn't exist
+          if (!fs.existsSync(this.sessionDir)) {
+            fs.mkdirSync(this.sessionDir, { recursive: true });
+          }
+        }
+
+        this.context = await this.browser.newContext({
+          viewport: { width: 1280, height: 720 },
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        });
+
+        await this.log('✓ New browser context created', 'success');
+      }
 
       this.page = await this.context.newPage();
       await this.log("✓ Browser context created", 'success');
+
     } catch (error: any) {
       await this.log(`❌ Browser initialization failed: ${error.message}`, 'error');
       throw new Error(`Failed to initialize browser: ${error.message}`);
@@ -67,47 +125,224 @@ export class GeminiScraper {
       });
 
       await this.log("✓ Page loaded successfully", 'success');
-      await this.page.waitForTimeout(3000);
 
-      // Check if we need to login
-      const needsLogin = await this.page.locator('text=/sign in/i').isVisible().catch(() => false);
+      // Take screenshot for debugging
+      const screenshotPath = `/tmp/gemini-step1-${Date.now()}.png`;
+      await this.page.screenshot({ path: screenshotPath, fullPage: true });
+      await this.log(`📸 Screenshot saved: ${screenshotPath}`, 'info');
 
-      if (needsLogin) {
-        await this.log("🔑 Login required - clicking sign in button", 'info');
+      // Wait for page to settle
+      await this.page.waitForTimeout(5000);
 
-        await this.page.click('text=/sign in/i');
-        await this.page.waitForTimeout(2000);
+      // Check if we're already logged in (session worked!)
+      const chatBoxSelectors = [
+        'textarea[placeholder*="Enter a prompt"]',
+        'textarea[aria-label*="prompt"]',
+        'div[contenteditable="true"]',
+        'textarea',
+        '.chat-input'
+      ];
 
-        await this.log("📧 Entering email address", 'info');
-        const emailInput = this.page.locator('input[type="email"]');
-        await emailInput.waitFor({ timeout: 10000 });
-        await emailInput.fill(email);
+      let alreadyLoggedIn = false;
+      for (const selector of chatBoxSelectors) {
+        try {
+          const element = this.page.locator(selector).first();
+          if (await element.isVisible({ timeout: 3000 })) {
+            alreadyLoggedIn = true;
+            await this.log(`✓ Already logged in - found chat interface with selector: ${selector}`, 'success');
+            break;
+          }
+        } catch {}
+      }
+
+      if (alreadyLoggedIn) {
+        this.isLoggedIn = true;
+        await this.saveSession();
+        return;
+      }
+
+      // Need to login - look for sign in button
+      await this.log("🔑 Not logged in - looking for sign in button", 'info');
+
+      const signInSelectors = [
+        'text=/sign in/i',
+        'a:has-text("Sign in")',
+        'button:has-text("Sign in")',
+        '[href*="accounts.google.com"]'
+      ];
+
+      let signInClicked = false;
+      for (const selector of signInSelectors) {
+        try {
+          const element = this.page.locator(selector).first();
+          if (await element.isVisible({ timeout: 3000 })) {
+            await this.log(`✓ Found sign in button with selector: ${selector}`, 'success');
+            await element.click();
+            signInClicked = true;
+            await this.page.waitForTimeout(3000);
+            break;
+          }
+        } catch {}
+      }
+
+      if (!signInClicked) {
+        await this.log("⚠️ No sign in button found - might already be on login page", 'warning');
+      }
+
+      // Enter email
+      await this.log("📧 Entering email address", 'info');
+
+      const emailSelectors = [
+        'input[type="email"]',
+        'input[name="identifier"]',
+        'input[autocomplete="username"]',
+        '#identifierId'
+      ];
+
+      let emailEntered = false;
+      for (const selector of emailSelectors) {
+        try {
+          const emailInput = this.page.locator(selector).first();
+          await emailInput.waitFor({ timeout: 15000, state: 'visible' });
+          await emailInput.clear();
+          await emailInput.fill(email);
+          await this.log(`✓ Email entered using selector: ${selector}`, 'success');
+          emailEntered = true;
+          break;
+        } catch {}
+      }
+
+      if (!emailEntered) {
+        throw new Error("Could not find email input field");
+      }
+
+      // Click Next or press Enter
+      await this.page.waitForTimeout(1000);
+
+      const nextButtonSelectors = [
+        'button:has-text("Next")',
+        '#identifierNext',
+        'button[type="button"]'
+      ];
+
+      let nextClicked = false;
+      for (const selector of nextButtonSelectors) {
+        try {
+          const nextButton = this.page.locator(selector).first();
+          if (await nextButton.isVisible({ timeout: 2000 })) {
+            await nextButton.click();
+            await this.log(`✓ Clicked Next button with selector: ${selector}`, 'success');
+            nextClicked = true;
+            break;
+          }
+        } catch {}
+      }
+
+      if (!nextClicked) {
+        await this.log("⚠️ Next button not found, pressing Enter", 'warning');
         await this.page.keyboard.press('Enter');
-        await this.page.waitForTimeout(3000);
+      }
 
-        await this.log("🔒 Entering password", 'info');
-        const passwordInput = this.page.locator('input[type="password"]');
-        await passwordInput.waitFor({ timeout: 10000 });
-        await passwordInput.fill(password);
-        await this.page.keyboard.press('Enter');
-        await this.page.waitForTimeout(5000);
+      await this.page.waitForTimeout(5000);
 
-        // Check for 2FA
-        const has2FA = await this.page.locator('text=/verify/i').isVisible().catch(() => false);
-        if (has2FA) {
-          await this.log("⚠️ 2FA verification detected - cannot proceed", 'error');
-          throw new Error("2FA verification required. Please disable 2FA or use app-specific password.");
+      // Take screenshot after email step
+      const screenshot2Path = `/tmp/gemini-step2-${Date.now()}.png`;
+      await this.page.screenshot({ path: screenshot2Path, fullPage: true });
+      await this.log(`📸 Screenshot saved: ${screenshot2Path}`, 'info');
+
+      // Enter password
+      await this.log("🔒 Entering password", 'info');
+
+      const passwordSelectors = [
+        'input[type="password"]',
+        'input[name="password"]',
+        'input[autocomplete="current-password"]',
+        '#password input'
+      ];
+
+      let passwordEntered = false;
+      for (const selector of passwordSelectors) {
+        try {
+          const passwordInput = this.page.locator(selector).first();
+          await passwordInput.waitFor({ timeout: 20000, state: 'visible' });
+          await passwordInput.clear();
+          await passwordInput.fill(password);
+          await this.log(`✓ Password entered using selector: ${selector}`, 'success');
+          passwordEntered = true;
+          break;
+        } catch (e: any) {
+          await this.log(`⚠️ Selector ${selector} failed: ${e.message}`, 'warning');
         }
+      }
 
+      if (!passwordEntered) {
+        // Dump page HTML for debugging
+        const html = await this.page.content();
+        const htmlPath = `/tmp/gemini-page-${Date.now()}.html`;
+        fs.writeFileSync(htmlPath, html);
+        await this.log(`📄 Page HTML saved: ${htmlPath}`, 'info');
+
+        throw new Error("Could not find password input field after multiple attempts");
+      }
+
+      // Click Next or press Enter
+      await this.page.waitForTimeout(1000);
+
+      nextClicked = false;
+      for (const selector of nextButtonSelectors) {
+        try {
+          const nextButton = this.page.locator(selector).first();
+          if (await nextButton.isVisible({ timeout: 2000 })) {
+            await nextButton.click();
+            await this.log(`✓ Clicked Next button after password`, 'success');
+            nextClicked = true;
+            break;
+          }
+        } catch {}
+      }
+
+      if (!nextClicked) {
+        await this.log("⚠️ Next button not found, pressing Enter", 'warning');
+        await this.page.keyboard.press('Enter');
+      }
+
+      await this.page.waitForTimeout(8000);
+
+      // Take screenshot after login
+      const screenshot3Path = `/tmp/gemini-step3-${Date.now()}.png`;
+      await this.page.screenshot({ path: screenshot3Path, fullPage: true });
+      await this.log(`📸 Screenshot saved: ${screenshot3Path}`, 'info');
+
+      // Check for 2FA
+      const has2FA = await this.page.locator('text=/verify/i').isVisible({ timeout: 3000 }).catch(() => false);
+      if (has2FA) {
+        await this.log("⚠️ 2FA verification detected - cannot proceed", 'error');
+        throw new Error("2FA verification required. Please disable 2FA or use app-specific password.");
+      }
+
+      // Verify we're on Gemini
+      const onGemini = await this.page.locator('textarea, div[contenteditable="true"]').first().isVisible({ timeout: 10000 }).catch(() => false);
+
+      if (onGemini) {
         await this.log("✅ Login completed successfully", 'success');
         this.isLoggedIn = true;
+        await this.saveSession();
       } else {
-        await this.log("✓ Already logged in - no authentication needed", 'success');
-        this.isLoggedIn = true;
+        throw new Error("Login may have failed - could not find Gemini chat interface");
       }
 
     } catch (error: any) {
       await this.log(`❌ Login failed: ${error.message}`, 'error');
+
+      // Final screenshot on error
+      if (this.page) {
+        try {
+          const errorScreenshot = `/tmp/gemini-error-${Date.now()}.png`;
+          await this.page.screenshot({ path: errorScreenshot, fullPage: true });
+          await this.log(`📸 Error screenshot: ${errorScreenshot}`, 'error');
+        } catch {}
+      }
+
       throw new Error(`Google login failed: ${error.message}`);
     }
   }

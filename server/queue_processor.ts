@@ -61,9 +61,9 @@ class QueueProcessor {
         });
 
         try {
-          // Initialize scraper
-          await this.scraper.init();
-          // Login with account credentials
+          // Initialize scraper with email to enable session persistence
+          await this.scraper.init(account.email);
+          // Login with account credentials (will reuse session if available)
           await this.scraper.login(account.email, account.passwordEncrypted);
           // Extract via browser chat
           const result = await this.scraper.extract(task.promptText);
