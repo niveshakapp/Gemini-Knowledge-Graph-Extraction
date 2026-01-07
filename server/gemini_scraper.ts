@@ -1,4 +1,5 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { storage } from "./storage";
 
 export class GeminiScraper {
   private browser: Browser | null = null;
@@ -8,9 +9,17 @@ export class GeminiScraper {
   private password: string = "";
   private isLoggedIn: boolean = false;
 
+  private async log(message: string, level: 'info' | 'success' | 'warning' | 'error' = 'info') {
+    console.log(`[${level.toUpperCase()}] ${message}`);
+    await storage.createLog({
+      logLevel: level,
+      logMessage: message
+    });
+  }
+
   async init() {
     try {
-      console.log("Launching Chromium browser...");
+      await this.log("🚀 Initializing browser...", 'info');
       this.browser = await chromium.launch({
         headless: true,
         args: [
@@ -24,15 +33,17 @@ export class GeminiScraper {
         ]
       });
 
+      await this.log("✓ Browser launched successfully", 'success');
+
       this.context = await this.browser.newContext({
         viewport: { width: 1280, height: 720 },
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
       });
 
       this.page = await this.context.newPage();
-      console.log("Browser initialized successfully");
+      await this.log("✓ Browser context created", 'success');
     } catch (error: any) {
-      console.error("Browser initialization failed:", error.message);
+      await this.log(`❌ Browser initialization failed: ${error.message}`, 'error');
       throw new Error(`Failed to initialize browser: ${error.message}`);
     }
   }
@@ -46,55 +57,56 @@ export class GeminiScraper {
     this.password = password;
 
     try {
-      console.log(`Navigating to Gemini with account: ${email}`);
+      await this.log(`🔐 Attempting login with account: ${email}`, 'info');
+      await this.log("📍 Navigating to gemini.google.com/app", 'info');
 
-      // Navigate to Gemini
       await this.page.goto('https://gemini.google.com/app', {
         waitUntil: 'networkidle',
         timeout: 60000
       });
 
+      await this.log("✓ Page loaded successfully", 'success');
       await this.page.waitForTimeout(3000);
 
       // Check if we need to login
       const needsLogin = await this.page.locator('text=/sign in/i').isVisible().catch(() => false);
 
       if (needsLogin) {
-        console.log("Login required, attempting to sign in...");
+        await this.log("🔑 Login required - clicking sign in button", 'info');
 
-        // Click sign in button
         await this.page.click('text=/sign in/i');
         await this.page.waitForTimeout(2000);
 
-        // Enter email
+        await this.log("📧 Entering email address", 'info');
         const emailInput = this.page.locator('input[type="email"]');
         await emailInput.waitFor({ timeout: 10000 });
         await emailInput.fill(email);
         await this.page.keyboard.press('Enter');
         await this.page.waitForTimeout(3000);
 
-        // Enter password
+        await this.log("🔒 Entering password", 'info');
         const passwordInput = this.page.locator('input[type="password"]');
         await passwordInput.waitFor({ timeout: 10000 });
         await passwordInput.fill(password);
         await this.page.keyboard.press('Enter');
         await this.page.waitForTimeout(5000);
 
-        // Check for 2FA or other verification
+        // Check for 2FA
         const has2FA = await this.page.locator('text=/verify/i').isVisible().catch(() => false);
         if (has2FA) {
+          await this.log("⚠️ 2FA verification detected - cannot proceed", 'error');
           throw new Error("2FA verification required. Please disable 2FA or use app-specific password.");
         }
 
-        console.log("Login completed successfully");
+        await this.log("✅ Login completed successfully", 'success');
         this.isLoggedIn = true;
       } else {
-        console.log("Already logged in or no login required");
+        await this.log("✓ Already logged in - no authentication needed", 'success');
         this.isLoggedIn = true;
       }
 
     } catch (error: any) {
-      console.error("Login failed:", error.message);
+      await this.log(`❌ Login failed: ${error.message}`, 'error');
       throw new Error(`Google login failed: ${error.message}`);
     }
   }
@@ -109,27 +121,30 @@ export class GeminiScraper {
     }
 
     try {
-      console.log(`Sending prompt to Gemini: ${prompt.substring(0, 100)}...`);
-
-      // Wait for the chat interface to be ready
+      await this.log(`📝 Starting extraction with prompt: "${prompt.substring(0, 100)}..."`, 'info');
+      await this.log("⏳ Waiting for chat interface to be ready", 'info');
       await this.page.waitForTimeout(2000);
 
       // Find and fill the prompt textarea
+      await this.log("🔍 Locating prompt input box", 'info');
       const promptBox = this.page.locator('textarea, div[contenteditable="true"]').first();
       await promptBox.waitFor({ timeout: 10000 });
       await promptBox.click();
+      await this.log("✓ Prompt box located", 'success');
+
+      await this.log("⌨️  Typing prompt into Gemini", 'info');
       await promptBox.fill(prompt);
       await this.page.waitForTimeout(1000);
 
-      // Send the message (usually Enter key or a send button)
+      await this.log("📤 Sending prompt to Gemini", 'info');
       await this.page.keyboard.press('Enter');
-      console.log("Prompt sent, waiting for response...");
 
-      // Wait for response to appear (this is tricky as Gemini streams responses)
-      await this.page.waitForTimeout(10000); // Give it time to generate
+      await this.log("⏳ Waiting for Gemini response (10 seconds)", 'info');
+      await this.page.waitForTimeout(10000);
+
+      await this.log("📥 Extracting response from page", 'info');
 
       // Try to extract the response text
-      // Gemini's response is usually in a specific container
       const responseSelectors = [
         'div[data-message-author-role="model"]',
         '.model-response-text',
@@ -142,34 +157,42 @@ export class GeminiScraper {
         const element = this.page.locator(selector).last();
         if (await element.isVisible().catch(() => false)) {
           responseText = await element.innerText();
+          await this.log(`✓ Response extracted using selector: ${selector}`, 'success');
           break;
         }
       }
 
       // If we couldn't find response with selectors, try getting all text
       if (!responseText) {
+        await this.log("⚠️ Specific selectors failed - trying full body text", 'warning');
         const bodyText = await this.page.locator('body').innerText();
-        // Try to extract the last substantial block of text
         const lines = bodyText.split('\n').filter(line => line.trim().length > 20);
         responseText = lines.slice(-10).join('\n');
       }
 
       if (!responseText || responseText.length < 10) {
+        await this.log("❌ No valid response received from Gemini", 'error');
         throw new Error("No valid response received from Gemini");
       }
 
-      console.log(`Received response (${responseText.length} chars)`);
+      await this.log(`✅ Response received successfully (${responseText.length} characters)`, 'success');
+      await this.log("🔄 Parsing response into knowledge graph format", 'info');
 
-      // Parse the response into knowledge graph format
-      return this.parseResponseToKG(responseText, prompt);
+      const knowledgeGraph = this.parseResponseToKG(responseText, prompt);
+
+      await this.log(`✓ Knowledge graph created with ${knowledgeGraph.nodes.length} nodes`, 'success');
+
+      return knowledgeGraph;
 
     } catch (error: any) {
-      console.error("Extraction error:", error.message);
+      await this.log(`❌ Extraction error: ${error.message}`, 'error');
 
       // Take a screenshot for debugging
       if (this.page) {
         try {
-          await this.page.screenshot({ path: `/tmp/gemini-error-${Date.now()}.png` });
+          const timestamp = Date.now();
+          await this.page.screenshot({ path: `/tmp/gemini-error-${timestamp}.png` });
+          await this.log(`📸 Debug screenshot saved: /tmp/gemini-error-${timestamp}.png`, 'info');
         } catch {}
       }
 
@@ -178,25 +201,20 @@ export class GeminiScraper {
   }
 
   private parseResponseToKG(responseText: string, originalPrompt: string): any {
-    // Try to parse structured data from response
     const lines = responseText.split('\n').filter(line => line.trim());
 
-    // Extract entity name from prompt
     const entityMatch = originalPrompt.match(/(?:about|for|regarding)\s+([A-Za-z\s&.]+?)(?:\s+in|\s+stock|\s+company|$)/i);
     const entityName = entityMatch?.[1]?.trim() || "Unknown Entity";
 
-    // Create nodes from key points in the response
     const nodes: any[] = [];
     let nodeId = 1;
 
-    // Add main entity
     nodes.push({
       id: nodeId++,
       label: entityName,
       type: "MainEntity"
     });
 
-    // Extract bullet points or numbered items as nodes
     const bulletPoints = lines.filter(line =>
       /^[\*\-\d]+[.)]\s/.test(line.trim()) ||
       line.trim().startsWith('•')
@@ -213,7 +231,6 @@ export class GeminiScraper {
       }
     });
 
-    // If no bullet points, extract sentences
     if (nodes.length === 1) {
       const sentences = responseText.match(/[^.!?]+[.!?]+/g) || [];
       sentences.slice(0, 8).forEach(sentence => {
@@ -228,7 +245,6 @@ export class GeminiScraper {
       });
     }
 
-    // Create edges connecting everything to main entity
     const edges = nodes.slice(1).map(node => ({
       from: 1,
       to: node.id,
@@ -254,7 +270,7 @@ export class GeminiScraper {
       if (this.page) await this.page.close();
       if (this.context) await this.context.close();
       if (this.browser) await this.browser.close();
-      console.log("Browser closed successfully");
+      await this.log("✓ Browser closed successfully", 'success');
     } catch (error) {
       console.error("Error closing browser:", error);
     }
