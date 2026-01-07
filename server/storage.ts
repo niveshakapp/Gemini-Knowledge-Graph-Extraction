@@ -21,11 +21,13 @@ export interface IStorage {
   deleteAccount(id: number): Promise<void>;
   updateAccount(id: number, updates: Partial<GeminiAccount>): Promise<GeminiAccount>;
   getAvailableAccount(): Promise<GeminiAccount | undefined>;
+  getAllAvailableAccounts(): Promise<GeminiAccount[]>;
   fixAccountsActiveStatus(): Promise<void>;
 
   // Queue
   getQueue(): Promise<QueueItem[]>;
   getPendingQueueItem(): Promise<QueueItem | undefined>;
+  getPendingQueueItems(limit: number): Promise<QueueItem[]>;
   createQueueItem(item: InsertQueue): Promise<QueueItem>;
   updateQueueItem(id: number, updates: Partial<QueueItem>): Promise<QueueItem>;
   deleteQueueItem(id: number): Promise<void>;
@@ -103,6 +105,21 @@ export class DatabaseStorage implements IStorage {
     return account;
   }
 
+  async getAllAvailableAccounts(): Promise<GeminiAccount[]> {
+    const now = new Date();
+    const accounts = await db.select()
+      .from(geminiAccounts)
+      .where(and(
+        eq(geminiAccounts.isActive, true),
+        eq(geminiAccounts.isCurrentlyInUse, false),
+        or(
+          isNull(geminiAccounts.rateLimitedUntil),
+          lt(geminiAccounts.rateLimitedUntil, now)
+        )
+      ));
+    return accounts;
+  }
+
   async fixAccountsActiveStatus(): Promise<void> {
     // Update all accounts to ensure isActive is true, isCurrentlyInUse is false, and rateLimitedUntil is null
     await db.update(geminiAccounts)
@@ -126,6 +143,15 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(extractionQueue.priority), desc(extractionQueue.createdAt))
       .limit(1);
     return item;
+  }
+
+  async getPendingQueueItems(limit: number): Promise<QueueItem[]> {
+    const items = await db.select()
+      .from(extractionQueue)
+      .where(eq(extractionQueue.status, 'queued'))
+      .orderBy(desc(extractionQueue.priority), desc(extractionQueue.createdAt))
+      .limit(limit);
+    return items;
   }
 
   async createQueueItem(item: InsertQueue): Promise<QueueItem> {

@@ -363,13 +363,24 @@ export class GeminiScraper {
 
       // Find and fill the prompt textarea
       await this.log("🔍 Locating prompt input box", 'info');
-      const promptBox = this.page.locator('textarea, div[contenteditable="true"]').first();
-      await promptBox.waitFor({ timeout: 10000 });
-      await promptBox.click();
-      await this.log("✓ Prompt box located", 'success');
+      const promptBox = this.page.locator('div[contenteditable="true"]').first();
+      await promptBox.waitFor({ timeout: 10000, state: 'visible' });
 
-      await this.log("⌨️  Typing prompt into Gemini", 'info');
-      await promptBox.fill(prompt);
+      // Click to focus
+      await promptBox.click();
+      await this.page.waitForTimeout(1000);
+
+      // Clear any existing text
+      await this.page.keyboard.press('Control+A');
+      await this.page.keyboard.press('Backspace');
+      await this.page.waitForTimeout(500);
+
+      await this.log("✓ Prompt box located and focused", 'success');
+
+      await this.log("⌨️  Typing prompt into Gemini (this may take a moment)...", 'info');
+
+      // Use type instead of fill for better reliability with contenteditable
+      await promptBox.type(prompt, { delay: 10 }); // 10ms delay between keystrokes
       await this.page.waitForTimeout(1000);
 
       await this.log("📤 Sending prompt to Gemini", 'info');
