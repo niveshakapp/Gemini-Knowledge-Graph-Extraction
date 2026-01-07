@@ -6,17 +6,24 @@ import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
+const GEMINI_MODELS = [
+  { id: 'gemini-2.0-flash-exp', name: 'Gemini 3 Fast', description: 'Answers quickly' },
+  { id: 'gemini-2.0-flash-thinking-exp', name: 'Gemini 3 Thinking', description: 'Solves complex problems' },
+  { id: 'gemini-1.5-pro-002', name: 'Gemini 3 Pro', description: 'Thinks longer for advanced maths and code' }
+];
+
 export default function AddTask() {
   const [entityType, setEntityType] = useState<'Stock' | 'Industry'>('Stock');
   const [name, setName] = useState("");
   const [id, setId] = useState(""); // Simplified: User enters ID manually for now since we don't have lookup UI
-  const [prompt, setPrompt] = useState(`Extract a comprehensive Knowledge Graph for the given entity. 
+  const [prompt, setPrompt] = useState(`Extract a comprehensive Knowledge Graph for the given entity.
 Focus on:
 1. Key relationships
 2. Strategic partnerships
 3. Market positioning
 4. Recent developments`);
   const [priority, setPriority] = useState(0);
+  const [selectedModel, setSelectedModel] = useState('gemini-1.5-pro-002'); // Default to Gemini 3 Pro
 
   const createMutation = useCreateQueueItem();
   const { toast } = useToast();
@@ -39,7 +46,7 @@ Focus on:
         entityName: name,
         promptText: prompt,
         priority,
-        geminiModel: 'gemini-1.5-pro'
+        geminiModel: selectedModel
       });
       toast({ title: "Task Queued", description: `Extraction for ${name} has been added to the queue.` });
       setLocation("/");
@@ -141,6 +148,32 @@ Focus on:
           <div className="flex justify-between text-xs text-muted-foreground">
             <span>Low</span>
             <span>Critical</span>
+          </div>
+        </div>
+
+        {/* Gemini Model Selection */}
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Gemini Model</label>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {GEMINI_MODELS.map((model) => (
+              <button
+                key={model.id}
+                type="button"
+                onClick={() => setSelectedModel(model.id)}
+                className={cn(
+                  "flex flex-col items-start gap-2 p-4 rounded-lg border-2 transition-all duration-200 text-left",
+                  selectedModel === model.id
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-muted bg-muted/30 text-muted-foreground hover:bg-muted/50 hover:border-muted-foreground/30"
+                )}
+              >
+                <span className="font-semibold text-sm">{model.name}</span>
+                <span className="text-xs opacity-80">{model.description}</span>
+                {model.id === 'gemini-1.5-pro-002' && (
+                  <span className="text-xs bg-primary/20 px-2 py-0.5 rounded">Default</span>
+                )}
+              </button>
+            ))}
           </div>
         </div>
 
