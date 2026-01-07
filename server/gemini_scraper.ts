@@ -60,9 +60,10 @@ export class GeminiScraper {
       await this.log(`🔐 Attempting login with account: ${email}`, 'info');
       await this.log("📍 Navigating to gemini.google.com/app", 'info');
 
+      // Use domcontentloaded instead of networkidle for better reliability on slower networks
       await this.page.goto('https://gemini.google.com/app', {
-        waitUntil: 'networkidle',
-        timeout: 60000
+        waitUntil: 'domcontentloaded',
+        timeout: 120000
       });
 
       await this.log("✓ Page loaded successfully", 'success');
