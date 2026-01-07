@@ -125,13 +125,14 @@ export default function AccountsPage() {
               </div>
               <div>
                 <label className="text-sm font-medium mb-1 block">Password</label>
-                <input 
+                <input
                   className="w-full bg-background border border-border rounded px-3 py-2"
                   type="password"
                   value={newAccount.passwordEncrypted}
                   onChange={e => setNewAccount({...newAccount, passwordEncrypted: e.target.value})}
                   required
                 />
+                <p className="text-xs text-muted-foreground mt-1">⚠️ Note: Browser automation is blocked in this environment</p>
               </div>
               <div className="flex justify-end gap-3 pt-4">
                 <button type="button" onClick={() => setIsDialogOpen(false)} className="px-4 py-2 text-muted-foreground hover:text-foreground">Cancel</button>
