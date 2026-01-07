@@ -3,7 +3,7 @@ services:
     name: gemini-knowledge-graph-extraction
     runtime: node
     plan: free
-    buildCommand: npm install && npm run build && npx playwright install --with-deps chromium
+    buildCommand: npm install && npm run build && npm run db:push
     startCommand: bash start.sh
     envVars:
       - key: DATABASE_URL
