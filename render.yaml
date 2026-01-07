@@ -3,11 +3,13 @@ services:
     name: gemini-knowledge-graph-extraction
     runtime: node
     plan: free
-    buildCommand: npm install && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0 npx playwright install --with-deps chromium && npm run build && npm run db:push
-    startCommand: npm start
+    buildCommand: npm install && npm run build && npx playwright install --with-deps chromium
+    startCommand: bash start.sh
     envVars:
       - key: DATABASE_URL
         sync: false
       - key: SESSION_SECRET
         generateValue: true
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: 0
     healthCheckPath: /
