@@ -7,11 +7,11 @@ echo "========================================="
 
 # On Render, the filesystem is ephemeral between builds and runtime
 # So we MUST install Playwright browsers at startup every time
-echo "📥 Installing Playwright Chromium browser with system dependencies..."
+echo "📥 Installing Playwright Chromium browser..."
 echo "⏳ This may take 30-60 seconds on first startup..."
 
-# Force install Playwright browsers with all required system dependencies
-npx playwright install --with-deps chromium 2>&1 | while IFS= read -r line; do
+# Install Playwright browsers (without system deps - Render Free tier has no root access)
+npx playwright install chromium 2>&1 | while IFS= read -r line; do
   echo "    $line"
 done
 
