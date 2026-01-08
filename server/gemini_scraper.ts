@@ -383,15 +383,12 @@ export class GeminiScraper {
       // Select the model before entering prompt
       await this.log(`🎯 Selecting model: ${geminiModel}`, 'info');
       try {
-        // Look for model selector button - the "Fast/Pro" switcher
+        // Look for model selector button using actual selectors from Gemini HTML
         const modelSelectors = [
-          'button.input-area-switch',  // The actual model selector button!
+          'div[data-test-id="bard-mode-menu-button"]',  // Container div from HTML
+          'button.input-area-switch',  // The actual model button
           'button:has-text("Fast")',
-          'button:has-text("Pro")',
-          'button:has-text("Advanced")',
-          'button[aria-label*="model"]',
-          'button[aria-label*="Model"]',
-          '[data-test-id="model-selector"]'
+          'button:has-text("Pro")'
         ];
 
         let modelSelectorFound = false;
@@ -406,10 +403,12 @@ export class GeminiScraper {
             const currentModel = buttonText?.toLowerCase().trim();
             const wantPro = geminiModel.includes('pro');
             const wantFlash = geminiModel.includes('flash');
+            const wantThinking = geminiModel.includes('thinking');
 
             // If current model matches what we want, skip clicking
             if ((wantPro && currentModel?.includes('pro')) ||
-                (wantFlash && currentModel?.includes('fast'))) {
+                (wantFlash && !wantThinking && currentModel?.includes('fast')) ||
+                (wantThinking && currentModel?.includes('thinking'))) {
               await this.log(`✓ Already on correct model: ${buttonText}`, 'success');
               modelSelectorFound = true;
               break;
@@ -424,11 +423,30 @@ export class GeminiScraper {
             await this.page.screenshot({ path: `/tmp/gemini-after-model-click-${timestamp2}.png` });
             await this.log(`📸 After click: /tmp/gemini-after-model-click-${timestamp2}.png`, 'info');
 
-            // Try to find and click the specific model option
+            // Use data-test-id selectors from actual HTML
+            const modelTestIdMap: Record<string, string> = {
+              'gemini-3-flash': 'bard-mode-option-fast',
+              'gemini-3-flash-thinking': 'bard-mode-option-thinking',
+              'gemini-3-pro': 'bard-mode-option-pro'
+            };
+
+            const testId = modelTestIdMap[geminiModel];
+            if (testId) {
+              const option = this.page.locator(`[data-test-id="${testId}"]`).first();
+              if (await option.isVisible().catch(() => false)) {
+                await option.click();
+                await this.log(`✓ Selected model via test-id: ${testId}`, 'success');
+                modelSelectorFound = true;
+                await this.page.waitForTimeout(1000);
+                break;
+              }
+            }
+
+            // Fallback: try text-based selectors
             const modelNameMap: Record<string, string[]> = {
-              'gemini-3-flash': ['Fast', 'Flash', 'Gemini 3 Flash', '3 Flash', '2.0 Flash'],
-              'gemini-3-flash-thinking': ['Thinking', 'Flash Thinking', 'Gemini 3 Flash Thinking'],
-              'gemini-3-pro': ['Pro', 'Advanced', 'Gemini Pro', 'Gemini 3 Pro', '3 Pro', '2.5 Pro', '1.5 Pro']
+              'gemini-3-flash': ['Fast'],
+              'gemini-3-flash-thinking': ['Thinking'],
+              'gemini-3-pro': ['Pro']
             };
 
             const modelOptions = modelNameMap[geminiModel] || ['Pro'];
@@ -563,29 +581,22 @@ export class GeminiScraper {
       });
       await this.log(`🔍 Response container: ${JSON.stringify(responseContainerInfo, null, 2)}`, 'info');
 
-      await this.log("📋 Clicking copy button to get full, clean JSON response", 'info');
+      await this.log("📋 Searching for copy button to get full JSON response", 'info');
 
-      // Find and click the copy button to get clean JSON without conversational text
+      // Find and click the copy button - use specific selector from Gemini HTML
       let responseText = "";
       const copyButtonSelectors = [
+        'button[aria-label="Copy code"]',  // Exact match from HTML
+        'button.copy-button',  // Class from HTML
         'button[aria-label*="Copy"]',
-        'button[aria-label*="copy"]',
-        'button:has-text("Copy")',
-        'button[title*="Copy"]',
-        'button[title*="copy"]',
-        '[data-test-id="copy-button"]',
-        'button.copy-button',
-        'button svg[class*="copy"]',
-        'button:has(svg)',  // Try any button with SVG icon
-        'button'  // Last resort: try ALL buttons
+        'button[aria-label*="copy"]'
       ];
 
       let copySuccess = false;
 
-      // Try to find copy button - search globally since response container selector is unknown
+      // Search for copy buttons
       for (const selector of copyButtonSelectors) {
         try {
-          // Search the entire page for copy buttons
           const copyButtons = this.page.locator(selector);
           const count = await copyButtons.count();
 
@@ -657,11 +668,29 @@ export class GeminiScraper {
       }
 
       await this.log(`✅ Response received (${responseText.length} characters)`, 'success');
-      await this.log("🔄 Parsing response into knowledge graph format", 'info');
 
-      const knowledgeGraph = this.parseResponseToKG(responseText, prompt);
+      // Try to parse as JSON first (if copied from code block, it should be clean JSON)
+      let knowledgeGraph: any;
+      try {
+        const parsedJson = JSON.parse(responseText);
 
-      await this.log(`✓ Knowledge graph created with ${knowledgeGraph.nodes.length} nodes`, 'success');
+        // If it's already a valid knowledge graph structure, use it as-is
+        if (parsedJson.nodes || parsedJson.edges || parsedJson.extraction_metadata) {
+          await this.log("✓ Using response as-is (already in JSON format)", 'success');
+          knowledgeGraph = parsedJson;
+        } else {
+          // Not a knowledge graph structure, need to parse
+          await this.log("🔄 Parsing response into knowledge graph format", 'info');
+          knowledgeGraph = this.parseResponseToKG(responseText, prompt);
+        }
+      } catch (jsonError) {
+        // Not valid JSON, parse as text
+        await this.log("🔄 Parsing text response into knowledge graph format", 'info');
+        knowledgeGraph = this.parseResponseToKG(responseText, prompt);
+      }
+
+      const nodeCount = knowledgeGraph.nodes?.length || 0;
+      await this.log(`✓ Knowledge graph ready with ${nodeCount} nodes`, 'success');
 
       return knowledgeGraph;
 
