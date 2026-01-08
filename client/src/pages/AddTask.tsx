@@ -7,9 +7,9 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
 const GEMINI_MODELS = [
-  { id: 'gemini-2.0-flash-exp', name: 'Gemini 3 Fast', description: 'Answers quickly' },
-  { id: 'gemini-2.0-flash-thinking-exp', name: 'Gemini 3 Thinking', description: 'Solves complex problems' },
-  { id: 'gemini-1.5-pro-002', name: 'Gemini 3 Pro', description: 'Thinks longer for advanced maths and code' }
+  { id: 'gemini-3-flash', name: 'Gemini 3 Fast', description: 'Answers quickly' },
+  { id: 'gemini-3-flash-thinking', name: 'Gemini 3 Thinking', description: 'Solves complex problems' },
+  { id: 'gemini-3-pro', name: 'Gemini 3 Pro', description: 'Thinks longer for advanced maths and code' }
 ];
 
 export default function AddTask() {
@@ -23,7 +23,7 @@ Focus on:
 3. Market positioning
 4. Recent developments`);
   const [priority, setPriority] = useState(0);
-  const [selectedModel, setSelectedModel] = useState('gemini-1.5-pro-002'); // Default to Gemini 3 Pro
+  const [selectedModel, setSelectedModel] = useState('gemini-3-pro'); // Default to Gemini 3 Pro
 
   const createMutation = useCreateQueueItem();
   const { toast } = useToast();
