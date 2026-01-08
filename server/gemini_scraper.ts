@@ -362,29 +362,61 @@ export class GeminiScraper {
       await this.log("⏳ Waiting for chat interface to be ready", 'info');
       await this.page.waitForTimeout(2000);
 
+      // DEBUG: Take screenshot before model selection
+      const timestamp1 = Date.now();
+      await this.page.screenshot({ path: `/tmp/gemini-before-model-select-${timestamp1}.png` });
+      await this.log(`📸 Debug screenshot: /tmp/gemini-before-model-select-${timestamp1}.png`, 'info');
+
+      // DEBUG: Dump all buttons on page to find model selector
+      const allButtons = await this.page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('button'));
+        return buttons.map(btn => ({
+          text: btn.textContent?.trim().substring(0, 50),
+          ariaLabel: btn.getAttribute('aria-label'),
+          className: btn.className,
+          id: btn.id
+        })).filter(b => b.text || b.ariaLabel);
+      });
+      await this.log(`🔍 Found ${allButtons.length} buttons on page`, 'info');
+      await this.log(`📋 Sample buttons: ${JSON.stringify(allButtons.slice(0, 10), null, 2)}`, 'info');
+
       // Select the model before entering prompt
       await this.log(`🎯 Selecting model: ${geminiModel}`, 'info');
       try {
         // Look for model selector button (usually near top of page)
         const modelSelectors = [
           'button[aria-label*="model"]',
+          'button[aria-label*="Model"]',
           'button:has-text("Gemini")',
+          'button:has-text("Flash")',
+          'button:has-text("Pro")',
           '[data-test-id="model-selector"]',
-          'button.model-selector'
+          'button.model-selector',
+          'div[role="button"]:has-text("Gemini")',
+          'div[role="button"]:has-text("Flash")'
         ];
 
         let modelSelectorFound = false;
         for (const selector of modelSelectors) {
           const button = this.page.locator(selector).first();
           if (await button.isVisible().catch(() => false)) {
+            await this.log(`✓ Found potential model selector: ${selector}`, 'info');
+            const buttonText = await button.textContent();
+            await this.log(`📝 Button text: "${buttonText}"`, 'info');
+
             await button.click();
-            await this.page.waitForTimeout(1000);
+            await this.page.waitForTimeout(1500);
+
+            // Take screenshot after clicking
+            const timestamp2 = Date.now();
+            await this.page.screenshot({ path: `/tmp/gemini-after-model-click-${timestamp2}.png` });
+            await this.log(`📸 After click: /tmp/gemini-after-model-click-${timestamp2}.png`, 'info');
 
             // Try to find and click the specific model option
             const modelNameMap: Record<string, string[]> = {
-              'gemini-3-flash': ['Gemini 3 Flash', 'Flash', 'Gemini Flash'],
-              'gemini-3-flash-thinking': ['Gemini 3 Flash Thinking', 'Flash Thinking', 'Thinking'],
-              'gemini-3-pro': ['Gemini 3 Pro', 'Gemini Pro', 'Pro']
+              'gemini-3-flash': ['Gemini 3 Flash', 'Flash', 'Gemini Flash', '3 Flash', '2.0 Flash'],
+              'gemini-3-flash-thinking': ['Gemini 3 Flash Thinking', 'Flash Thinking', 'Thinking', '3 Flash Thinking', 'Deep Thinking'],
+              'gemini-3-pro': ['Gemini 3 Pro', 'Gemini Pro', 'Pro', '3 Pro', '2.5 Pro', '1.5 Pro']
             };
 
             const modelOptions = modelNameMap[geminiModel] || ['Pro'];
@@ -392,8 +424,9 @@ export class GeminiScraper {
               const option = this.page.locator(`button:has-text("${optionText}")`).first();
               if (await option.isVisible().catch(() => false)) {
                 await option.click();
-                await this.log(`✓ Selected model: ${optionText}`, 'success');
+                await this.log(`✓ Selected model option: ${optionText}`, 'success');
                 modelSelectorFound = true;
+                await this.page.waitForTimeout(1000);
                 break;
               }
             }
@@ -464,16 +497,44 @@ export class GeminiScraper {
 
       await this.page.waitForTimeout(2000); // Extra wait for UI to settle
 
+      // DEBUG: Take screenshot before looking for copy button
+      const timestamp3 = Date.now();
+      await this.page.screenshot({ path: `/tmp/gemini-before-copy-${timestamp3}.png`, fullPage: true });
+      await this.log(`📸 Full page screenshot: /tmp/gemini-before-copy-${timestamp3}.png`, 'info');
+
+      // DEBUG: Dump all buttons in response area
+      const responseButtons = await this.page.evaluate(() => {
+        const responseContainer = document.querySelector('div[data-message-author-role="model"]');
+        if (!responseContainer) return { found: false, buttons: [] };
+
+        const buttons = Array.from(responseContainer.querySelectorAll('button'));
+        return {
+          found: true,
+          buttons: buttons.map(btn => ({
+            text: btn.textContent?.trim().substring(0, 30),
+            ariaLabel: btn.getAttribute('aria-label'),
+            title: btn.getAttribute('title'),
+            className: btn.className
+          }))
+        };
+      });
+      await this.log(`🔍 Response buttons: ${JSON.stringify(responseButtons, null, 2)}`, 'info');
+
       await this.log("📋 Clicking copy button to get full, clean JSON response", 'info');
 
       // Find and click the copy button to get clean JSON without conversational text
       let responseText = "";
       const copyButtonSelectors = [
         'button[aria-label*="Copy"]',
+        'button[aria-label*="copy"]',
         'button:has-text("Copy")',
+        'button[title*="Copy"]',
+        'button[title*="copy"]',
         '[data-test-id="copy-button"]',
         'button.copy-button',
-        'button[title*="Copy"]'
+        'button svg[class*="copy"]',
+        'button:has(svg)',  // Try any button with SVG icon
+        'div[data-message-author-role="model"] button'  // Any button in response
       ];
 
       let copySuccess = false;
@@ -484,8 +545,9 @@ export class GeminiScraper {
           const copyButton = responseContainer.locator(selector).first();
 
           if (await copyButton.isVisible().catch(() => false)) {
+            await this.log(`📌 Trying copy button selector: ${selector}`, 'info');
             await copyButton.click();
-            await this.page.waitForTimeout(1000);
+            await this.page.waitForTimeout(1500);
 
             // Get text from clipboard using JavaScript
             responseText = await this.page.evaluate(async () => {
@@ -500,10 +562,12 @@ export class GeminiScraper {
               await this.log(`✓ Successfully copied response via ${selector} (${responseText.length} characters)`, 'success');
               copySuccess = true;
               break;
+            } else {
+              await this.log(`⚠️ Button clicked but clipboard empty or too short`, 'warning');
             }
           }
-        } catch (e) {
-          // Continue to next selector
+        } catch (e: any) {
+          await this.log(`⚠️ Selector ${selector} failed: ${e.message}`, 'warning');
         }
       }
 
