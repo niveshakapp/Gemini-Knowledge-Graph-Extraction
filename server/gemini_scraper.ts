@@ -416,7 +416,8 @@ export class GeminiScraper {
 
             // Click to open model picker
             await button.click();
-            await this.page.waitForTimeout(1500);
+            await this.log(`🔄 Waiting for model menu to load...`, 'info');
+            await this.page.waitForTimeout(2000);  // Increased wait time
 
             // Take screenshot after clicking
             const timestamp2 = Date.now();
@@ -433,12 +434,36 @@ export class GeminiScraper {
             const testId = modelTestIdMap[geminiModel];
             if (testId) {
               const option = this.page.locator(`[data-test-id="${testId}"]`).first();
-              if (await option.isVisible().catch(() => false)) {
-                await option.click();
+
+              // Wait for the option to be visible AND enabled (not disabled)
+              try {
+                await option.waitFor({ state: 'visible', timeout: 5000 });
+                await this.log(`✓ Menu option visible: ${testId}`, 'info');
+
+                // Check if disabled
+                const isDisabled = await option.getAttribute('disabled');
+                const ariaDisabled = await option.getAttribute('aria-disabled');
+
+                if (isDisabled === 'true' || ariaDisabled === 'true') {
+                  await this.log(`⚠️ Option ${testId} is disabled, waiting for it to enable...`, 'warning');
+                  // Wait a bit more for it to enable
+                  await this.page.waitForTimeout(2000);
+                }
+
+                // Force click using JavaScript if regular click fails
+                await this.page.evaluate((selector) => {
+                  const element = document.querySelector(`[data-test-id="${selector}"]`) as HTMLElement;
+                  if (element) {
+                    element.click();
+                  }
+                }, testId);
+
                 await this.log(`✓ Selected model via test-id: ${testId}`, 'success');
                 modelSelectorFound = true;
                 await this.page.waitForTimeout(1000);
                 break;
+              } catch (menuError: any) {
+                await this.log(`⚠️ Could not click menu option: ${menuError.message}`, 'warning');
               }
             }
 
@@ -581,69 +606,41 @@ export class GeminiScraper {
       });
       await this.log(`🔍 Response container: ${JSON.stringify(responseContainerInfo, null, 2)}`, 'info');
 
-      await this.log("📋 Searching for copy button to get full JSON response", 'info');
+      await this.log("📋 Extracting JSON from code block (bypassing clipboard)", 'info');
 
-      // Find and click the copy button - use specific selector from Gemini HTML
+      // CRITICAL FIX: Extract directly from code element instead of clipboard
+      // Clipboard API fails in headless mode, so we read the DOM directly
       let responseText = "";
-      const copyButtonSelectors = [
-        'button[aria-label="Copy code"]',  // Exact match from HTML
-        'button.copy-button',  // Class from HTML
-        'button[aria-label*="Copy"]',
-        'button[aria-label*="copy"]'
-      ];
-
       let copySuccess = false;
 
-      // Search for copy buttons
-      for (const selector of copyButtonSelectors) {
+      // Try to extract from code block first (most reliable for JSON responses)
+      const codeSelectors = [
+        'code[data-test-id="code-content"]',  // Exact selector from Gemini HTML
+        'code.code-container',
+        'pre code',
+        'code-block code'
+      ];
+
+      for (const selector of codeSelectors) {
         try {
-          const copyButtons = this.page.locator(selector);
-          const count = await copyButtons.count();
+          const codeElement = this.page.locator(selector).last();
+          if (await codeElement.isVisible().catch(() => false)) {
+            responseText = await codeElement.textContent() || '';
 
-          if (count > 0) {
-            await this.log(`📌 Found ${count} buttons matching "${selector}"`, 'info');
-
-            // Try each matching button (most likely the last one for latest response)
-            for (let i = count - 1; i >= 0; i--) {
-              const copyButton = copyButtons.nth(i);
-
-              if (await copyButton.isVisible().catch(() => false)) {
-                const buttonText = await copyButton.textContent().catch(() => '');
-                const ariaLabel = await copyButton.getAttribute('aria-label').catch(() => '');
-                await this.log(`📌 Trying button ${i}: text="${buttonText?.substring(0, 20)}", aria-label="${ariaLabel}"`, 'info');
-
-                await copyButton.click();
-                await this.page.waitForTimeout(1500);
-
-                // Get text from clipboard using JavaScript
-                responseText = await this.page.evaluate(async () => {
-                  try {
-                    return await navigator.clipboard.readText();
-                  } catch (e) {
-                    return '';
-                  }
-                });
-
-                if (responseText && responseText.length > 100) {  // Increased threshold since we expect large JSON
-                  await this.log(`✓ Successfully copied response (${responseText.length} characters)`, 'success');
-                  copySuccess = true;
-                  break;
-                } else {
-                  await this.log(`⚠️ Button clicked but clipboard has only ${responseText.length} chars`, 'warning');
-                }
-              }
+            if (responseText && responseText.length > 100) {
+              await this.log(`✓ Extracted JSON from code element: ${selector} (${responseText.length} characters)`, 'success');
+              copySuccess = true;
+              break;
             }
-
-            if (copySuccess) break;
           }
         } catch (e: any) {
-          await this.log(`⚠️ Selector ${selector} failed: ${e.message}`, 'warning');
+          await this.log(`⚠️ Code selector ${selector} failed: ${e.message}`, 'warning');
         }
       }
 
-      // Fallback: If copy button doesn't work, try scraping text
+      // Fallback: If code extraction doesn't work, try scraping full response text
       if (!copySuccess || !responseText) {
-        await this.log("⚠️ Copy button not found, falling back to text extraction", 'warning');
+        await this.log("⚠️ Code block not found, falling back to full text extraction", 'warning');
 
         const responseSelectors = [
           'div[data-message-author-role="model"]',
