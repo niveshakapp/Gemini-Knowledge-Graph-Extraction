@@ -374,18 +374,17 @@ export class GeminiScraper {
       await this.page.evaluate((text) => {
         const editableDiv = document.querySelector('div[contenteditable="true"]') as HTMLElement;
         if (editableDiv) {
-          // Clear existing content
-          editableDiv.innerHTML = '';
+          // Focus first
+          editableDiv.focus();
 
-          // Set the text content
+          // Clear and set content using textContent only (avoids TrustedHTML issues)
           editableDiv.textContent = text;
 
-          // Trigger input event to notify Gemini of the change
+          // Trigger input and change events to notify Gemini
           const inputEvent = new Event('input', { bubbles: true });
+          const changeEvent = new Event('change', { bubbles: true });
           editableDiv.dispatchEvent(inputEvent);
-
-          // Focus the element
-          editableDiv.focus();
+          editableDiv.dispatchEvent(changeEvent);
         }
       }, prompt);
 
