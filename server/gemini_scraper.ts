@@ -383,27 +383,39 @@ export class GeminiScraper {
       // Select the model before entering prompt
       await this.log(`🎯 Selecting model: ${geminiModel}`, 'info');
       try {
-        // Look for model selector button (usually near top of page)
+        // Look for model selector button - the "Fast/Pro" switcher
         const modelSelectors = [
+          'button.input-area-switch',  // The actual model selector button!
+          'button:has-text("Fast")',
+          'button:has-text("Pro")',
+          'button:has-text("Advanced")',
           'button[aria-label*="model"]',
           'button[aria-label*="Model"]',
-          'button:has-text("Gemini")',
-          'button:has-text("Flash")',
-          'button:has-text("Pro")',
-          '[data-test-id="model-selector"]',
-          'button.model-selector',
-          'div[role="button"]:has-text("Gemini")',
-          'div[role="button"]:has-text("Flash")'
+          '[data-test-id="model-selector"]'
         ];
 
         let modelSelectorFound = false;
         for (const selector of modelSelectors) {
           const button = this.page.locator(selector).first();
           if (await button.isVisible().catch(() => false)) {
-            await this.log(`✓ Found potential model selector: ${selector}`, 'info');
+            await this.log(`✓ Found model selector: ${selector}`, 'info');
             const buttonText = await button.textContent();
-            await this.log(`📝 Button text: "${buttonText}"`, 'info');
+            await this.log(`📝 Current model: "${buttonText}"`, 'info');
 
+            // Check if we need to switch models
+            const currentModel = buttonText?.toLowerCase().trim();
+            const wantPro = geminiModel.includes('pro');
+            const wantFlash = geminiModel.includes('flash');
+
+            // If current model matches what we want, skip clicking
+            if ((wantPro && currentModel?.includes('pro')) ||
+                (wantFlash && currentModel?.includes('fast'))) {
+              await this.log(`✓ Already on correct model: ${buttonText}`, 'success');
+              modelSelectorFound = true;
+              break;
+            }
+
+            // Click to open model picker
             await button.click();
             await this.page.waitForTimeout(1500);
 
@@ -414,9 +426,9 @@ export class GeminiScraper {
 
             // Try to find and click the specific model option
             const modelNameMap: Record<string, string[]> = {
-              'gemini-3-flash': ['Gemini 3 Flash', 'Flash', 'Gemini Flash', '3 Flash', '2.0 Flash'],
-              'gemini-3-flash-thinking': ['Gemini 3 Flash Thinking', 'Flash Thinking', 'Thinking', '3 Flash Thinking', 'Deep Thinking'],
-              'gemini-3-pro': ['Gemini 3 Pro', 'Gemini Pro', 'Pro', '3 Pro', '2.5 Pro', '1.5 Pro']
+              'gemini-3-flash': ['Fast', 'Flash', 'Gemini 3 Flash', '3 Flash', '2.0 Flash'],
+              'gemini-3-flash-thinking': ['Thinking', 'Flash Thinking', 'Gemini 3 Flash Thinking'],
+              'gemini-3-pro': ['Pro', 'Advanced', 'Gemini Pro', 'Gemini 3 Pro', '3 Pro', '2.5 Pro', '1.5 Pro']
             };
 
             const modelOptions = modelNameMap[geminiModel] || ['Pro'];
