@@ -347,7 +347,7 @@ export class GeminiScraper {
     }
   }
 
-  async extract(prompt: string): Promise<any> {
+  async extract(prompt: string, geminiModel: string = 'gemini-3-pro'): Promise<any> {
     if (!this.page) {
       throw new Error("Browser not initialized");
     }
@@ -357,9 +357,59 @@ export class GeminiScraper {
     }
 
     try {
-      await this.log(`📝 Starting extraction with prompt: "${prompt.substring(0, 100)}..."`, 'info');
+      await this.log(`📝 Starting extraction with model: ${geminiModel}`, 'info');
+      await this.log(`📝 Prompt preview: "${prompt.substring(0, 100)}..."`, 'info');
       await this.log("⏳ Waiting for chat interface to be ready", 'info');
       await this.page.waitForTimeout(2000);
+
+      // Select the model before entering prompt
+      await this.log(`🎯 Selecting model: ${geminiModel}`, 'info');
+      try {
+        // Look for model selector button (usually near top of page)
+        const modelSelectors = [
+          'button[aria-label*="model"]',
+          'button:has-text("Gemini")',
+          '[data-test-id="model-selector"]',
+          'button.model-selector'
+        ];
+
+        let modelSelectorFound = false;
+        for (const selector of modelSelectors) {
+          const button = this.page.locator(selector).first();
+          if (await button.isVisible().catch(() => false)) {
+            await button.click();
+            await this.page.waitForTimeout(1000);
+
+            // Try to find and click the specific model option
+            const modelNameMap: Record<string, string[]> = {
+              'gemini-3-flash': ['Gemini 3 Flash', 'Flash', 'Gemini Flash'],
+              'gemini-3-flash-thinking': ['Gemini 3 Flash Thinking', 'Flash Thinking', 'Thinking'],
+              'gemini-3-pro': ['Gemini 3 Pro', 'Gemini Pro', 'Pro']
+            };
+
+            const modelOptions = modelNameMap[geminiModel] || ['Pro'];
+            for (const optionText of modelOptions) {
+              const option = this.page.locator(`button:has-text("${optionText}")`).first();
+              if (await option.isVisible().catch(() => false)) {
+                await option.click();
+                await this.log(`✓ Selected model: ${optionText}`, 'success');
+                modelSelectorFound = true;
+                break;
+              }
+            }
+
+            if (modelSelectorFound) break;
+          }
+        }
+
+        if (!modelSelectorFound) {
+          await this.log(`⚠️ Could not find model selector, using default model`, 'warning');
+        }
+      } catch (modelError: any) {
+        await this.log(`⚠️ Model selection failed: ${modelError.message}, continuing with default`, 'warning');
+      }
+
+      await this.page.waitForTimeout(1000);
 
       // Find and fill the prompt textarea
       await this.log("🔍 Locating prompt input box", 'info');
@@ -394,35 +444,88 @@ export class GeminiScraper {
       await this.log("📤 Sending prompt to Gemini", 'info');
       await this.page.keyboard.press('Enter');
 
-      await this.log("⏳ Waiting for Gemini response (10 seconds)", 'info');
-      await this.page.waitForTimeout(10000);
+      await this.log("⏳ Waiting for Gemini response to complete...", 'info');
 
-      await this.log("📥 Extracting response from page", 'info');
+      // Wait for response to finish generating (look for stop generating button to disappear)
+      await this.page.waitForTimeout(5000);
 
-      // Try to extract the response text
-      const responseSelectors = [
-        'div[data-message-author-role="model"]',
-        '.model-response-text',
-        '[data-test-id="model-response"]',
-        '.response-container'
+      // Wait for response to be complete by checking if generation stopped
+      let waitTime = 0;
+      const maxWaitTime = 120000; // 2 minutes max
+      while (waitTime < maxWaitTime) {
+        const isGenerating = await this.page.locator('button:has-text("Stop generating")').isVisible().catch(() => false);
+        if (!isGenerating) {
+          await this.log("✓ Response generation completed", 'success');
+          break;
+        }
+        await this.page.waitForTimeout(2000);
+        waitTime += 2000;
+      }
+
+      await this.page.waitForTimeout(2000); // Extra wait for UI to settle
+
+      await this.log("📋 Clicking copy button to get full, clean JSON response", 'info');
+
+      // Find and click the copy button to get clean JSON without conversational text
+      let responseText = "";
+      const copyButtonSelectors = [
+        'button[aria-label*="Copy"]',
+        'button:has-text("Copy")',
+        '[data-test-id="copy-button"]',
+        'button.copy-button',
+        'button[title*="Copy"]'
       ];
 
-      let responseText = "";
-      for (const selector of responseSelectors) {
-        const element = this.page.locator(selector).last();
-        if (await element.isVisible().catch(() => false)) {
-          responseText = await element.innerText();
-          await this.log(`✓ Response extracted using selector: ${selector}`, 'success');
-          break;
+      let copySuccess = false;
+      for (const selector of copyButtonSelectors) {
+        try {
+          // Look for copy button in the last response message
+          const responseContainer = this.page.locator('div[data-message-author-role="model"]').last();
+          const copyButton = responseContainer.locator(selector).first();
+
+          if (await copyButton.isVisible().catch(() => false)) {
+            await copyButton.click();
+            await this.page.waitForTimeout(1000);
+
+            // Get text from clipboard using JavaScript
+            responseText = await this.page.evaluate(async () => {
+              try {
+                return await navigator.clipboard.readText();
+              } catch (e) {
+                return '';
+              }
+            });
+
+            if (responseText && responseText.length > 10) {
+              await this.log(`✓ Successfully copied response via ${selector} (${responseText.length} characters)`, 'success');
+              copySuccess = true;
+              break;
+            }
+          }
+        } catch (e) {
+          // Continue to next selector
         }
       }
 
-      // If we couldn't find response with selectors, try getting all text
-      if (!responseText) {
-        await this.log("⚠️ Specific selectors failed - trying full body text", 'warning');
-        const bodyText = await this.page.locator('body').innerText();
-        const lines = bodyText.split('\n').filter(line => line.trim().length > 20);
-        responseText = lines.slice(-10).join('\n');
+      // Fallback: If copy button doesn't work, try scraping text
+      if (!copySuccess || !responseText) {
+        await this.log("⚠️ Copy button not found, falling back to text extraction", 'warning');
+
+        const responseSelectors = [
+          'div[data-message-author-role="model"]',
+          '.model-response-text',
+          '[data-test-id="model-response"]',
+          '.response-container'
+        ];
+
+        for (const selector of responseSelectors) {
+          const element = this.page.locator(selector).last();
+          if (await element.isVisible().catch(() => false)) {
+            responseText = await element.innerText();
+            await this.log(`✓ Response extracted using selector: ${selector}`, 'success');
+            break;
+          }
+        }
       }
 
       if (!responseText || responseText.length < 10) {
@@ -430,7 +533,7 @@ export class GeminiScraper {
         throw new Error("No valid response received from Gemini");
       }
 
-      await this.log(`✅ Response received successfully (${responseText.length} characters)`, 'success');
+      await this.log(`✅ Response received (${responseText.length} characters)`, 'success');
       await this.log("🔄 Parsing response into knowledge graph format", 'info');
 
       const knowledgeGraph = this.parseResponseToKG(responseText, prompt);

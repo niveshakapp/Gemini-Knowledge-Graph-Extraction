@@ -100,7 +100,7 @@ class QueueProcessor {
       await scraper.login(account.email, account.passwordEncrypted);
 
       // Extract via browser chat
-      const result = await scraper.extract(task.promptText);
+      const result = await scraper.extract(task.promptText, task.geminiModel || 'gemini-3-pro');
 
       // Save result
       await storage.createKG({
@@ -134,10 +134,17 @@ class QueueProcessor {
       const isRateLimit = err.message.toLowerCase().includes('rate limit');
       const rateLimitUntil = isRateLimit ? new Date(Date.now() + 3600000) : null;
 
+      const currentRetryCount = (task.retryCount || 0) + 1;
+      const maxRetries = 3;
+
+      // If retry count is less than max, requeue the task; otherwise mark as failed
+      const shouldRetry = currentRetryCount < maxRetries;
+      const newStatus = shouldRetry ? 'queued' : 'failed';
+
       await storage.updateQueueItem(task.id, {
-        status: 'failed',
+        status: newStatus,
         errorMessage: err.message,
-        retryCount: (task.retryCount || 0) + 1
+        retryCount: currentRetryCount
       });
 
       await storage.updateAccount(account.id, {
@@ -147,9 +154,13 @@ class QueueProcessor {
         rateLimitedUntil: rateLimitUntil
       });
 
+      const retryMessage = shouldRetry
+        ? `Extraction failed (retry ${currentRetryCount}/${maxRetries}): ${err.message}. Will retry.`
+        : `Extraction failed permanently after ${maxRetries} retries: ${err.message}`;
+
       await storage.createLog({
         logLevel: 'error',
-        logMessage: `Extraction failed: ${err.message}`,
+        logMessage: retryMessage,
         queueTaskId: task.id
       });
     } finally {

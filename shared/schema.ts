@@ -48,7 +48,7 @@ export const extractionQueue = pgTable("extraction_queue", {
   entityId: integer("entity_id").notNull(),
   entityName: text("entity_name").notNull(),
   promptText: text("prompt_text").notNull(),
-  geminiModel: text("gemini_model").default('gemini-1.5-pro-002'), // Gemini 3 Pro as default
+  geminiModel: text("gemini_model").default('gemini-3-pro'), // Gemini 3 Pro as default
   status: text("status").default('queued'), // queued, processing, completed, failed
   assignedAccountId: integer("assigned_account_id").references(() => geminiAccounts.id),
   startedAt: timestamp("started_at"),
