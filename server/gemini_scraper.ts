@@ -366,22 +366,31 @@ export class GeminiScraper {
       const promptBox = this.page.locator('div[contenteditable="true"]').first();
       await promptBox.waitFor({ timeout: 10000, state: 'visible' });
 
-      // Click to focus
-      await promptBox.click();
+      await this.log("✓ Prompt box located", 'success');
+      await this.log("📝 Injecting prompt text via JavaScript (bypassing keyboard simulation for large prompts)...", 'info');
+
+      // Use JavaScript evaluation to directly set the content
+      // This bypasses keyboard simulation and handles extremely long prompts instantly
+      await this.page.evaluate((text) => {
+        const editableDiv = document.querySelector('div[contenteditable="true"]') as HTMLElement;
+        if (editableDiv) {
+          // Clear existing content
+          editableDiv.innerHTML = '';
+
+          // Set the text content
+          editableDiv.textContent = text;
+
+          // Trigger input event to notify Gemini of the change
+          const inputEvent = new Event('input', { bubbles: true });
+          editableDiv.dispatchEvent(inputEvent);
+
+          // Focus the element
+          editableDiv.focus();
+        }
+      }, prompt);
+
       await this.page.waitForTimeout(1000);
-
-      // Clear any existing text
-      await this.page.keyboard.press('Control+A');
-      await this.page.keyboard.press('Backspace');
-      await this.page.waitForTimeout(500);
-
-      await this.log("✓ Prompt box located and focused", 'success');
-
-      await this.log("⌨️  Typing prompt into Gemini (this may take a moment)...", 'info');
-
-      // Use type instead of fill for better reliability with contenteditable
-      await promptBox.type(prompt, { delay: 10 }); // 10ms delay between keystrokes
-      await this.page.waitForTimeout(1000);
+      await this.log("✓ Prompt injected successfully", 'success');
 
       await this.log("📤 Sending prompt to Gemini", 'info');
       await this.page.keyboard.press('Enter');
