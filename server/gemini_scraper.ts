@@ -502,23 +502,54 @@ export class GeminiScraper {
       await this.page.screenshot({ path: `/tmp/gemini-before-copy-${timestamp3}.png`, fullPage: true });
       await this.log(`📸 Full page screenshot: /tmp/gemini-before-copy-${timestamp3}.png`, 'info');
 
-      // DEBUG: Dump all buttons in response area
-      const responseButtons = await this.page.evaluate(() => {
-        const responseContainer = document.querySelector('div[data-message-author-role="model"]');
-        if (!responseContainer) return { found: false, buttons: [] };
-
-        const buttons = Array.from(responseContainer.querySelectorAll('button'));
+      // DEBUG: Dump ALL buttons on the entire page to find copy button
+      const allPageButtons = await this.page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('button'));
         return {
-          found: true,
-          buttons: buttons.map(btn => ({
-            text: btn.textContent?.trim().substring(0, 30),
+          totalButtons: buttons.length,
+          buttons: buttons.map((btn, idx) => ({
+            index: idx,
+            text: btn.textContent?.trim().substring(0, 40),
             ariaLabel: btn.getAttribute('aria-label'),
             title: btn.getAttribute('title'),
-            className: btn.className
-          }))
+            className: btn.className.substring(0, 50)
+          })).filter(b => b.text || b.ariaLabel || b.title)
         };
       });
-      await this.log(`🔍 Response buttons: ${JSON.stringify(responseButtons, null, 2)}`, 'info');
+      await this.log(`🔍 ALL PAGE BUTTONS (${allPageButtons.totalButtons} total):`, 'info');
+      await this.log(JSON.stringify(allPageButtons.buttons, null, 2), 'info');
+
+      // DEBUG: Try multiple selectors for response container
+      const responseContainerInfo = await this.page.evaluate(() => {
+        const selectors = [
+          'div[data-message-author-role="model"]',
+          '[data-message-author-role="model"]',
+          '.model-response',
+          '.response-container',
+          '[role="article"]',
+          'message-content',
+          '.message'
+        ];
+
+        for (const sel of selectors) {
+          const el = document.querySelector(sel);
+          if (el) {
+            const buttons = Array.from(el.querySelectorAll('button'));
+            return {
+              selector: sel,
+              found: true,
+              buttonCount: buttons.length,
+              buttons: buttons.map(btn => ({
+                text: btn.textContent?.trim().substring(0, 30),
+                ariaLabel: btn.getAttribute('aria-label'),
+                title: btn.getAttribute('title')
+              }))
+            };
+          }
+        }
+        return { found: false, selector: 'none' };
+      });
+      await this.log(`🔍 Response container: ${JSON.stringify(responseContainerInfo, null, 2)}`, 'info');
 
       await this.log("📋 Clicking copy button to get full, clean JSON response", 'info');
 
@@ -534,37 +565,53 @@ export class GeminiScraper {
         'button.copy-button',
         'button svg[class*="copy"]',
         'button:has(svg)',  // Try any button with SVG icon
-        'div[data-message-author-role="model"] button'  // Any button in response
+        'button'  // Last resort: try ALL buttons
       ];
 
       let copySuccess = false;
+
+      // Try to find copy button - search globally since response container selector is unknown
       for (const selector of copyButtonSelectors) {
         try {
-          // Look for copy button in the last response message
-          const responseContainer = this.page.locator('div[data-message-author-role="model"]').last();
-          const copyButton = responseContainer.locator(selector).first();
+          // Search the entire page for copy buttons
+          const copyButtons = this.page.locator(selector);
+          const count = await copyButtons.count();
 
-          if (await copyButton.isVisible().catch(() => false)) {
-            await this.log(`📌 Trying copy button selector: ${selector}`, 'info');
-            await copyButton.click();
-            await this.page.waitForTimeout(1500);
+          if (count > 0) {
+            await this.log(`📌 Found ${count} buttons matching "${selector}"`, 'info');
 
-            // Get text from clipboard using JavaScript
-            responseText = await this.page.evaluate(async () => {
-              try {
-                return await navigator.clipboard.readText();
-              } catch (e) {
-                return '';
+            // Try each matching button (most likely the last one for latest response)
+            for (let i = count - 1; i >= 0; i--) {
+              const copyButton = copyButtons.nth(i);
+
+              if (await copyButton.isVisible().catch(() => false)) {
+                const buttonText = await copyButton.textContent().catch(() => '');
+                const ariaLabel = await copyButton.getAttribute('aria-label').catch(() => '');
+                await this.log(`📌 Trying button ${i}: text="${buttonText?.substring(0, 20)}", aria-label="${ariaLabel}"`, 'info');
+
+                await copyButton.click();
+                await this.page.waitForTimeout(1500);
+
+                // Get text from clipboard using JavaScript
+                responseText = await this.page.evaluate(async () => {
+                  try {
+                    return await navigator.clipboard.readText();
+                  } catch (e) {
+                    return '';
+                  }
+                });
+
+                if (responseText && responseText.length > 100) {  // Increased threshold since we expect large JSON
+                  await this.log(`✓ Successfully copied response (${responseText.length} characters)`, 'success');
+                  copySuccess = true;
+                  break;
+                } else {
+                  await this.log(`⚠️ Button clicked but clipboard has only ${responseText.length} chars`, 'warning');
+                }
               }
-            });
-
-            if (responseText && responseText.length > 10) {
-              await this.log(`✓ Successfully copied response via ${selector} (${responseText.length} characters)`, 'success');
-              copySuccess = true;
-              break;
-            } else {
-              await this.log(`⚠️ Button clicked but clipboard empty or too short`, 'warning');
             }
+
+            if (copySuccess) break;
           }
         } catch (e: any) {
           await this.log(`⚠️ Selector ${selector} failed: ${e.message}`, 'warning');
