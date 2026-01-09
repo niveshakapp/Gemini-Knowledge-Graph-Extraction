@@ -615,6 +615,9 @@ export class GeminiScraper {
 
       // Extract using JavaScript evaluation (instant, no waiting)
       responseText = await this.page.evaluate(() => {
+        // DEBUG: Log all elements found
+        const debugInfo: any = { selectors: [] };
+
         // Try multiple selectors in order of preference
         const selectors = [
           '.formatted-code-block-internal-container',  // Full code block container
@@ -626,17 +629,25 @@ export class GeminiScraper {
 
         for (const selector of selectors) {
           const elements = Array.from(document.querySelectorAll(selector));
+          debugInfo.selectors.push({
+            selector,
+            count: elements.length,
+            lastLength: elements.length > 0 ? (elements[elements.length - 1] as HTMLElement).textContent?.length || 0 : 0
+          });
+
           // Get the last matching element (latest response)
           const element = elements[elements.length - 1] as HTMLElement;
           if (element) {
             // Try both textContent and innerText
             const text = element.textContent || element.innerText || '';
             if (text.length > 100) {
+              console.log(`SUCCESS: Found ${text.length} chars in ${selector}`);
               return text;
             }
           }
         }
 
+        console.error('FAILED TO FIND CODE BLOCK:', JSON.stringify(debugInfo));
         return '';
       });
 
@@ -645,52 +656,22 @@ export class GeminiScraper {
         copySuccess = true;
       }
 
-      // Fallback: If JavaScript extraction doesn't work, try scraping full response text
+      // NO FALLBACK - If code extraction fails, throw error
       if (!copySuccess || !responseText) {
-        await this.log("⚠️ Code block extraction failed, falling back to full text", 'warning');
-
-        const responseSelectors = [
-          'div[data-message-author-role="model"]',
-          '.model-response-text',
-          '[data-test-id="model-response"]',
-          '.response-container'
-        ];
-
-        for (const selector of responseSelectors) {
-          const element = this.page.locator(selector).last();
-          if (await element.isVisible().catch(() => false)) {
-            responseText = await element.innerText();
-            await this.log(`✓ Response extracted using selector: ${selector}`, 'success');
-            break;
-          }
-        }
+        await this.log("❌ CRITICAL: Code block not found - cannot extract JSON", 'error');
+        throw new Error("Code block not found. Gemini may not have returned JSON in a code block.");
       }
 
-      if (!responseText || responseText.length < 10) {
-        await this.log("❌ No valid response received from Gemini", 'error');
-        throw new Error("No valid response received from Gemini");
-      }
+      await this.log(`✅ Raw JSON extracted (${responseText.length} characters)`, 'success');
 
-      await this.log(`✅ Response received (${responseText.length} characters)`, 'success');
-
-      // Try to parse as JSON first (if copied from code block, it should be clean JSON)
+      // ALWAYS use raw JSON - NEVER parse into knowledge graph format
       let knowledgeGraph: any;
       try {
-        const parsedJson = JSON.parse(responseText);
-
-        // If it's already a valid knowledge graph structure, use it as-is
-        if (parsedJson.nodes || parsedJson.edges || parsedJson.extraction_metadata) {
-          await this.log("✓ Using response as-is (already in JSON format)", 'success');
-          knowledgeGraph = parsedJson;
-        } else {
-          // Not a knowledge graph structure, need to parse
-          await this.log("🔄 Parsing response into knowledge graph format", 'info');
-          knowledgeGraph = this.parseResponseToKG(responseText, prompt);
-        }
+        knowledgeGraph = JSON.parse(responseText);
+        await this.log("✓ JSON parsed successfully - using as-is", 'success');
       } catch (jsonError) {
-        // Not valid JSON, parse as text
-        await this.log("🔄 Parsing text response into knowledge graph format", 'info');
-        knowledgeGraph = this.parseResponseToKG(responseText, prompt);
+        await this.log("❌ CRITICAL: Response is not valid JSON", 'error');
+        throw new Error("Gemini response is not valid JSON");
       }
 
       const nodeCount = knowledgeGraph.nodes?.length || 0;
