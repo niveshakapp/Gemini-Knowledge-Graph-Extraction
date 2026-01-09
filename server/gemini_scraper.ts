@@ -608,39 +608,40 @@ export class GeminiScraper {
 
       await this.log("📋 Extracting JSON from code block (bypassing clipboard)", 'info');
 
-      // CRITICAL FIX: Extract directly from code element instead of clipboard
-      // Clipboard API fails in headless mode, so we read the DOM directly
+      // CRITICAL FIX: Use JavaScript evaluation to extract immediately
+      // Playwright's textContent() waits for stability and times out on syntax-highlighted code
       let responseText = "";
       let copySuccess = false;
 
-      // Try to extract from code block first (most reliable for JSON responses)
-      const codeSelectors = [
-        'code[data-test-id="code-content"]',  // Exact selector from Gemini HTML
-        'code.code-container',
-        'pre code',
-        'code-block code'
-      ];
+      // Extract using JavaScript evaluation (instant, no waiting)
+      responseText = await this.page.evaluate(() => {
+        // Try multiple selectors in order of preference
+        const selectors = [
+          'code[data-test-id="code-content"]',
+          'code.code-container',
+          'pre code'
+        ];
 
-      for (const selector of codeSelectors) {
-        try {
-          const codeElement = this.page.locator(selector).last();
-          if (await codeElement.isVisible().catch(() => false)) {
-            responseText = await codeElement.textContent() || '';
-
-            if (responseText && responseText.length > 100) {
-              await this.log(`✓ Extracted JSON from code element: ${selector} (${responseText.length} characters)`, 'success');
-              copySuccess = true;
-              break;
-            }
+        for (const selector of selectors) {
+          const elements = Array.from(document.querySelectorAll(selector));
+          // Get the last matching element (latest response)
+          const element = elements[elements.length - 1];
+          if (element && element.textContent && element.textContent.length > 100) {
+            return element.textContent;
           }
-        } catch (e: any) {
-          await this.log(`⚠️ Code selector ${selector} failed: ${e.message}`, 'warning');
         }
+
+        return '';
+      });
+
+      if (responseText && responseText.length > 100) {
+        await this.log(`✓ Extracted JSON directly via JavaScript (${responseText.length} characters)`, 'success');
+        copySuccess = true;
       }
 
-      // Fallback: If code extraction doesn't work, try scraping full response text
+      // Fallback: If JavaScript extraction doesn't work, try scraping full response text
       if (!copySuccess || !responseText) {
-        await this.log("⚠️ Code block not found, falling back to full text extraction", 'warning');
+        await this.log("⚠️ Code block extraction failed, falling back to full text", 'warning');
 
         const responseSelectors = [
           'div[data-message-author-role="model"]',
