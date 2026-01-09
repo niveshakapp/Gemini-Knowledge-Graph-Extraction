@@ -617,17 +617,23 @@ export class GeminiScraper {
       responseText = await this.page.evaluate(() => {
         // Try multiple selectors in order of preference
         const selectors = [
+          '.formatted-code-block-internal-container',  // Full code block container
           'code[data-test-id="code-content"]',
           'code.code-container',
+          'div.code-block',
           'pre code'
         ];
 
         for (const selector of selectors) {
           const elements = Array.from(document.querySelectorAll(selector));
           // Get the last matching element (latest response)
-          const element = elements[elements.length - 1];
-          if (element && element.textContent && element.textContent.length > 100) {
-            return element.textContent;
+          const element = elements[elements.length - 1] as HTMLElement;
+          if (element) {
+            // Try both textContent and innerText
+            const text = element.textContent || element.innerText || '';
+            if (text.length > 100) {
+              return text;
+            }
           }
         }
 
