@@ -359,6 +359,14 @@ export class GeminiScraper {
     try {
       await this.log(`📝 Starting extraction with model: ${geminiModel}`, 'info');
       await this.log(`📝 Prompt preview: "${prompt.substring(0, 100)}..."`, 'info');
+
+      // CRITICAL: Start a NEW CHAT to avoid old context/hallucination
+      await this.log("🆕 Starting new chat to avoid context pollution", 'info');
+      await this.page.goto('https://gemini.google.com/app', {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000
+      });
+
       await this.log("⏳ Waiting for chat interface to be ready", 'info');
       await this.page.waitForTimeout(2000);
 
@@ -606,56 +614,85 @@ export class GeminiScraper {
       });
       await this.log(`🔍 Response container: ${JSON.stringify(responseContainerInfo, null, 2)}`, 'info');
 
-      await this.log("📋 Extracting JSON using delimiter strategy", 'info');
+      await this.log("📋 Extracting JSON using LAST-CHILD PRIORITY strategy", 'info');
 
-      // NEW STRATEGY: Use delimiters <<<JSON_START>>> and <<<JSON_END>>>
-      // This is more reliable than searching for specific code block classes
+      // STRICT LAST-CHILD PRIORITY LOGIC (Non-negotiable)
+      // 1. Find ALL message containers
+      // 2. Filter only those containing <<<JSON_START>>>
+      // 3. Take LAST from filtered list
+      // 4. Extract innerText
+      // 5. Run regex
+      // 6. If suspiciously short, find longest match
       let responseText = "";
       let copySuccess = false;
 
-      // Extract using JavaScript evaluation - get entire last response container
       responseText = await this.page.evaluate(() => {
-        // Selectors for the entire model response container (message bubble)
-        const containerSelectors = [
-          'message-content',  // Latest Gemini UI
-          'model-response',
-          '.model-response-text',
-          '[data-message-author-role="model"]',
-          '.response-container'
-        ];
+        console.log('=== STARTING LAST-CHILD PRIORITY EXTRACTION ===');
 
-        // Find the last response container
-        let responseContainer: HTMLElement | null = null;
-        for (const selector of containerSelectors) {
-          const elements = Array.from(document.querySelectorAll(selector));
-          if (elements.length > 0) {
-            responseContainer = elements[elements.length - 1] as HTMLElement;
-            console.log(`Found response container using: ${selector}`);
-            break;
+        // Step 1: Find ALL potential message containers using broad selector
+        const allBubbles = Array.from(document.querySelectorAll(
+          '.model-response-text, [data-message-author-role="model"], .message-content, message-content, .response-container'
+        )) as HTMLElement[];
+
+        console.log(`Step 1: Found ${allBubbles.length} total message containers`);
+
+        // Step 2: Filter - Keep only elements that contain <<<JSON_START>>>
+        const bubblesWithDelimiter = allBubbles.filter(bubble => {
+          const text = bubble.innerText || bubble.textContent || '';
+          const hasDelimiter = text.includes('<<<JSON_START>>>');
+          if (hasDelimiter) {
+            console.log(`Found bubble with delimiter (${text.length} chars)`);
           }
-        }
+          return hasDelimiter;
+        });
 
-        if (!responseContainer) {
-          console.error('No response container found');
+        console.log(`Step 2: Filtered to ${bubblesWithDelimiter.length} containers with delimiters`);
+
+        if (bubblesWithDelimiter.length === 0) {
+          console.error('CRITICAL: No containers found with <<<JSON_START>>> delimiter');
           return '';
         }
 
-        // Get the full innerText of the entire response
-        const fullText = responseContainer.innerText || responseContainer.textContent || '';
-        console.log(`Extracted full response text: ${fullText.length} characters`);
+        // Step 3: Select the LAST element from filtered list
+        const lastBubble = bubblesWithDelimiter[bubblesWithDelimiter.length - 1];
+        console.log(`Step 3: Selected LAST container from filtered list`);
 
-        // Use regex to extract content between delimiters
-        const regex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/;
-        const match = fullText.match(regex);
+        // Step 4: Extract innerText
+        const fullText = lastBubble.innerText || lastBubble.textContent || '';
+        console.log(`Step 4: Extracted innerText: ${fullText.length} characters`);
 
-        if (match && match[1]) {
-          const jsonContent = match[1].trim();
-          console.log(`SUCCESS: Extracted JSON from delimiters: ${jsonContent.length} characters`);
-          return jsonContent;
+        // Step 5: Run regex to find content between delimiters
+        const regex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/g;
+        const matches: string[] = [];
+        let match;
+
+        while ((match = regex.exec(fullText)) !== null) {
+          matches.push(match[1].trim());
+          console.log(`Found match: ${match[1].trim().length} characters`);
         }
 
-        console.error('Delimiters not found in response');
-        return '';
+        if (matches.length === 0) {
+          console.error('CRITICAL: Regex found no matches between delimiters');
+          return '';
+        }
+
+        // Step 6: Safety check - if first match is suspiciously short but we have multiple, take longest
+        let jsonContent = matches[0];
+
+        if (matches.length > 1) {
+          // Find the longest match
+          jsonContent = matches.reduce((longest, current) =>
+            current.length > longest.length ? current : longest
+          );
+          console.log(`Step 6: Multiple matches found, selected longest: ${jsonContent.length} chars`);
+        } else if (jsonContent.length < 2000 && fullText.length > 10000) {
+          console.warn(`WARNING: Match is suspiciously short (${jsonContent.length} chars) vs raw text (${fullText.length} chars)`);
+        }
+
+        console.log(`SUCCESS: Final extracted JSON: ${jsonContent.length} characters`);
+        console.log(`First 200 chars: ${jsonContent.substring(0, 200)}`);
+
+        return jsonContent;
       });
 
       if (responseText && responseText.length > 10) {
