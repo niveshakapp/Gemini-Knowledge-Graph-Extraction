@@ -1071,8 +1071,37 @@ export class GeminiScraper {
 
         if (bubblesWithDelimiter.length === 0) {
           console.error('CRITICAL: No containers found with <<<JSON_START>>> delimiter');
-          console.error('=== FORENSIC DEBUG: First 500 chars of document.body.innerText ===');
-          console.error(document.body.innerText.substring(0, 500));
+          console.error('=== ATTEMPTING DIRECT PAGE TEXT EXTRACTION AS FALLBACK ===');
+
+          // Check if delimiter exists anywhere in the page
+          const pageText = document.body.innerText;
+          const pageHasDelimiter = pageText.includes('<<<JSON_START>>>');
+          console.error(`Delimiter exists in page: ${pageHasDelimiter}`);
+
+          if (pageHasDelimiter) {
+            // Try to extract from page text directly
+            console.log('Delimiter found in page but not in message containers. Attempting direct extraction...');
+            const startIndex = pageText.indexOf('<<<JSON_START>>>');
+            const endIndex = pageText.indexOf('<<<JSON_END>>>', startIndex);
+
+            if (startIndex !== -1) {
+              console.log(`Found start delimiter at index ${startIndex}`);
+              if (endIndex !== -1) {
+                console.log(`Found end delimiter at index ${endIndex}`);
+                const extracted = pageText.substring(startIndex + 16, endIndex).trim(); // 16 = length of "<<<JSON_START>>>"
+                console.log(`Direct extraction successful: ${extracted.length} chars`);
+                return extracted;
+              } else {
+                // End delimiter not found, take everything after start
+                const extracted = pageText.substring(startIndex + 16).trim();
+                console.warn(`End delimiter not found, extracted ${extracted.length} chars from start to end of page`);
+                return extracted;
+              }
+            }
+          }
+
+          console.error('=== FORENSIC DEBUG: First 1000 chars of document.body.innerText ===');
+          console.error(pageText.substring(0, 1000));
           console.error('=== END FORENSIC DEBUG ===');
           return '';
         }
