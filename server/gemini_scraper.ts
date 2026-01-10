@@ -97,24 +97,53 @@ export class GeminiScraper {
 
       await this.log("✓ Browser launched successfully", 'success');
 
-      // PRIORITY 1: Check for global manual login session (gemini_session.json)
-      const globalSessionPath = path.join(process.cwd(), 'gemini_session.json');
-      const hasGlobalSession = fs.existsSync(globalSessionPath);
+      // PRIORITY 1: Check for Environment Variable Session (for Render/GCP deployment)
+      const envSessionJson = process.env.GEMINI_SESSION_JSON;
 
-      if (hasGlobalSession) {
-        await this.log("🔄 Loading session from gemini_session.json (manual login)", 'info');
+      if (envSessionJson) {
+        try {
+          await this.log("🔄 Loading session from Environment Variable (GEMINI_SESSION_JSON)", 'info');
 
-        this.context = await this.browser.newContext({
-          storageState: globalSessionPath,
-          viewport: { width: 1920, height: 1080 },
-          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-          locale: 'en-US',
-          timezoneId: 'America/New_York'
-        });
+          const sessionData = JSON.parse(envSessionJson);
 
-        await this.log('✅ Global session loaded successfully (will skip login)', 'success');
-      } else {
-        // PRIORITY 2: Try to load existing session if email is provided
+          this.context = await this.browser.newContext({
+            storageState: sessionData,
+            viewport: { width: 1920, height: 1080 },
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            locale: 'en-US',
+            timezoneId: 'America/New_York'
+          });
+
+          await this.log('✅ Session loaded from Environment Variable (will skip login)', 'success');
+        } catch (parseError: any) {
+          await this.log(`⚠️ Failed to parse GEMINI_SESSION_JSON: ${parseError.message}`, 'warning');
+          await this.log('   Falling back to file-based session...', 'warning');
+          // Will fall through to next priority
+        }
+      }
+
+      // PRIORITY 2: Check for global manual login session file (gemini_session.json)
+      if (!this.context) {
+        const globalSessionPath = path.join(process.cwd(), 'gemini_session.json');
+        const hasGlobalSession = fs.existsSync(globalSessionPath);
+
+        if (hasGlobalSession) {
+          await this.log("🔄 Loading session from gemini_session.json (manual login)", 'info');
+
+          this.context = await this.browser.newContext({
+            storageState: globalSessionPath,
+            viewport: { width: 1920, height: 1080 },
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            locale: 'en-US',
+            timezoneId: 'America/New_York'
+          });
+
+          await this.log('✅ Global session file loaded successfully (will skip login)', 'success');
+        }
+      }
+
+      // PRIORITY 3: Try to load existing email-specific session if provided
+      if (!this.context) {
         await this.log("🔍 Checking for existing session...", 'info');
         const hasSession = email ? await this.sessionExists(email) : false;
 
@@ -133,27 +162,30 @@ export class GeminiScraper {
           });
 
           await this.log('✓ Session loaded successfully (will skip login)', 'success');
-        } else {
-          await this.log("ℹ️ No existing session found, will create new one", 'info');
-
-          if (email) {
-            this.sessionDir = this.getSessionDir(email);
-            // Create session directory if it doesn't exist
-            if (!fs.existsSync(this.sessionDir)) {
-              await this.log(`📁 Creating session directory: ${this.sessionDir}`, 'info');
-              fs.mkdirSync(this.sessionDir, { recursive: true });
-            }
-          }
-
-          this.context = await this.browser.newContext({
-            viewport: { width: 1920, height: 1080 },  // Realistic resolution
-            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-            locale: 'en-US',
-            timezoneId: 'America/New_York'
-          });
-
-          await this.log('✓ New browser context created', 'success');
         }
+      }
+
+      // PRIORITY 4: Create new session (no existing session found)
+      if (!this.context) {
+        await this.log("ℹ️ No existing session found, will create new one", 'info');
+
+        if (email) {
+          this.sessionDir = this.getSessionDir(email);
+          // Create session directory if it doesn't exist
+          if (!fs.existsSync(this.sessionDir)) {
+            await this.log(`📁 Creating session directory: ${this.sessionDir}`, 'info');
+            fs.mkdirSync(this.sessionDir, { recursive: true });
+          }
+        }
+
+        this.context = await this.browser.newContext({
+          viewport: { width: 1920, height: 1080 },  // Realistic resolution
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          locale: 'en-US',
+          timezoneId: 'America/New_York'
+        });
+
+        await this.log('✓ New browser context created', 'success');
       }
 
       this.page = await this.context.newPage();
