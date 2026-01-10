@@ -34,4 +34,25 @@ fi
 echo "========================================="
 echo "🚀 Starting Node.js application..."
 echo "========================================="
+
+# Debug: Show current directory and files
+echo "📂 Current directory: $(pwd)"
+echo "📋 Listing files:"
+ls -la
+
+# Check if dist/index.cjs exists
+if [ -f "dist/index.cjs" ]; then
+    echo "✅ Found dist/index.cjs"
+else
+    echo "❌ dist/index.cjs not found in current directory"
+    echo "📂 Checking parent directory..."
+    if [ -f "../dist/index.cjs" ]; then
+        echo "✅ Found ../dist/index.cjs - changing directory"
+        cd ..
+    else
+        echo "❌ dist/index.cjs not found anywhere"
+        exit 1
+    fi
+fi
+
 exec node dist/index.cjs

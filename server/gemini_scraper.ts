@@ -341,7 +341,7 @@ export class GeminiScraper {
 
       // FORENSIC: Check what inputs are actually present on the page
       await this.log("🔍 Analyzing page inputs...", 'info');
-      const pageInputs = await this.page.evaluate(() => {
+      const passwordPageInputs = await this.page.evaluate(() => {
         const inputs = Array.from(document.querySelectorAll('input'));
         return inputs.map(inp => ({
           type: inp.type,
@@ -352,7 +352,7 @@ export class GeminiScraper {
           visible: inp.offsetParent !== null
         })).filter(i => i.visible);
       });
-      await this.log(`📋 Found ${pageInputs.length} visible inputs: ${JSON.stringify(pageInputs, null, 2)}`, 'info');
+      await this.log(`📋 Found ${passwordPageInputs.length} visible inputs: ${JSON.stringify(passwordPageInputs, null, 2)}`, 'info');
 
       // Enter password
       await this.log("🔒 Looking for password input field", 'info');
