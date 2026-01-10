@@ -1077,29 +1077,54 @@ export class GeminiScraper {
           const fullPageText = document.body.innerText;
           console.log(`Attempting regex on full page text (${fullPageText.length} chars)`);
 
-          // Try STRICT regex first (both start and end delimiters)
-          const strictRegex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/;
-          const strictMatch = fullPageText.match(strictRegex);
+          const MIN_VALID_JSON_LENGTH = 500; // Skip placeholder text
+          const pageMatches: string[] = [];
 
-          if (strictMatch && strictMatch[1]) {
-            const extracted = strictMatch[1].trim();
-            console.log(`✅ STRICT regex match on full page: ${extracted.length} chars`);
-            return extracted;
+          // Try STRICT regex first (both start and end delimiters) - find ALL matches
+          const strictRegex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/g;
+          let pageMatch;
+
+          while ((pageMatch = strictRegex.exec(fullPageText)) !== null) {
+            const candidateJson = pageMatch[1].trim();
+
+            // Skip short matches (prompt placeholders)
+            if (candidateJson.length < MIN_VALID_JSON_LENGTH) {
+              console.warn(`Global fallback: Skipping short match (${candidateJson.length} chars) - likely prompt placeholder`);
+              continue;
+            }
+
+            pageMatches.push(candidateJson);
+            console.log(`Global fallback: Found valid match: ${candidateJson.length} characters`);
+          }
+
+          // If strict regex found valid matches, return the longest one
+          if (pageMatches.length > 0) {
+            const longest = pageMatches.reduce((longest, current) =>
+              current.length > longest.length ? current : longest
+            );
+            console.log(`✅ STRICT regex on full page: Selected longest match (${longest.length} chars) from ${pageMatches.length} candidates`);
+            return longest;
           }
 
           // Try FALLBACK regex (start delimiter to end of text)
-          console.warn('STRICT regex failed on full page, trying FALLBACK regex...');
+          console.warn('STRICT regex found no valid matches on full page, trying FALLBACK regex...');
           const fallbackRegex = /<<<JSON_START>>>([\s\S]*)$/;
           const fallbackMatch = fullPageText.match(fallbackRegex);
 
           if (fallbackMatch && fallbackMatch[1]) {
-            const extracted = fallbackMatch[1].trim();
-            console.log(`⚠️ FALLBACK regex match on full page: ${extracted.length} chars (end delimiter may be missing)`);
-            return extracted;
+            const candidateJson = fallbackMatch[1].trim();
+
+            // Apply size filter
+            if (candidateJson.length >= MIN_VALID_JSON_LENGTH) {
+              console.log(`⚠️ FALLBACK regex match on full page: ${candidateJson.length} chars (end delimiter may be missing)`);
+              return candidateJson;
+            } else {
+              console.warn(`Skipping fallback match (${candidateJson.length} chars) - too short, likely placeholder`);
+            }
           }
 
           // If even regex on full page fails, log forensics
-          console.error('❌ Both STRICT and FALLBACK regex failed on full page text');
+          console.error('❌ No valid matches found on full page (all were < 500 chars or no matches)');
           console.error('=== FORENSIC DEBUG: First 1000 chars of document.body.innerText ===');
           console.error(fullPageText.substring(0, 1000));
           console.error('=== END FORENSIC DEBUG ===');
@@ -1120,43 +1145,58 @@ export class GeminiScraper {
         const matches: string[] = [];
         let match;
 
+        const MIN_VALID_JSON_LENGTH = 500; // Skip placeholder text from prompt instructions
+
         while ((match = strictRegex.exec(fullText)) !== null) {
-          matches.push(match[1].trim());
-          console.log(`Found strict match: ${match[1].trim().length} characters`);
+          const candidateJson = match[1].trim();
+
+          // STRICT SIZE FILTER: Skip instruction placeholders (< 500 chars)
+          if (candidateJson.length < MIN_VALID_JSON_LENGTH) {
+            console.warn(`Skipping short match (${candidateJson.length} chars) - likely prompt placeholder`);
+            continue;
+          }
+
+          matches.push(candidateJson);
+          console.log(`Found valid match: ${candidateJson.length} characters`);
         }
 
         // Step 5b: FALLBACK regex if strict fails (handles truncation)
         if (matches.length === 0) {
-          console.warn('STRICT regex failed - attempting FALLBACK regex (start tag to end of string)...');
+          console.warn('STRICT regex failed or only found placeholders - attempting FALLBACK regex (start tag to end of string)...');
           const fallbackRegex = /<<<JSON_START>>>([\s\S]*)$/;
           const fallbackMatch = fullText.match(fallbackRegex);
 
           if (fallbackMatch && fallbackMatch[1]) {
-            matches.push(fallbackMatch[1].trim());
-            console.log(`Found FALLBACK match: ${fallbackMatch[1].trim().length} characters (end tag may be truncated)`);
+            const candidateJson = fallbackMatch[1].trim();
+
+            // Apply same size filter to fallback
+            if (candidateJson.length >= MIN_VALID_JSON_LENGTH) {
+              matches.push(candidateJson);
+              console.log(`Found FALLBACK match: ${candidateJson.length} characters (end tag may be truncated)`);
+            } else {
+              console.warn(`Skipping fallback match (${candidateJson.length} chars) - too short, likely placeholder`);
+            }
           }
         }
 
         // Step 5c: FORENSIC DEBUGGING if all regex attempts fail
         if (matches.length === 0) {
-          console.error('CRITICAL: Both strict and fallback regex failed');
+          console.error('CRITICAL: No valid matches found (all were < 500 chars or no matches)');
           console.error('=== FORENSIC DEBUG: First 500 chars of lastBubble.innerText ===');
           console.error(fullText.substring(0, 500));
           console.error('=== END FORENSIC DEBUG ===');
           return '';
         }
 
-        // Step 6: Safety check - if first match is suspiciously short but we have multiple, take longest
+        // Step 6: If multiple valid matches, select the LONGEST one
         let jsonContent = matches[0];
 
         if (matches.length > 1) {
-          // Find the longest match
+          // Find the longest match (real response is typically 20K+ chars)
           jsonContent = matches.reduce((longest, current) =>
             current.length > longest.length ? current : longest
           );
-          console.log(`Step 6: Multiple matches found, selected longest: ${jsonContent.length} chars`);
-        } else if (jsonContent.length < 2000 && fullText.length > 10000) {
-          console.warn(`WARNING: Match is suspiciously short (${jsonContent.length} chars) vs raw text (${fullText.length} chars)`);
+          console.log(`Step 6: Multiple valid matches found, selected LONGEST: ${jsonContent.length} chars`);
         }
 
         console.log(`SUCCESS: Final extracted JSON: ${jsonContent.length} characters`);
