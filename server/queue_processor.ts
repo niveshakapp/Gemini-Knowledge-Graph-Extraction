@@ -158,10 +158,39 @@ class QueueProcessor {
         ? `Extraction failed (retry ${currentRetryCount}/${maxRetries}): ${err.message}. Will retry.`
         : `Extraction failed permanently after ${maxRetries} retries: ${err.message}`;
 
+      // Store error log with raw response if available (for debugging)
+      const logMetadata: any = {
+        errorType: err.name || 'Error',
+        accountId: account.id,
+        accountEmail: account.email,
+        geminiModel: task.geminiModel,
+        retryCount: currentRetryCount,
+        maxRetries: maxRetries
+      };
+
+      // If error contains raw response (delimiter extraction failed), save it for debugging
+      if (err.rawResponse) {
+        logMetadata.rawResponse = err.rawResponse;
+        logMetadata.rawResponseLength = err.rawResponseLength;
+        logMetadata.rawResponsePreview = err.rawResponse.substring(0, 1000); // First 1000 chars
+
+        // Also log to console for immediate visibility
+        console.log('=== RAW GEMINI RESPONSE (Delimiter Extraction Failed) ===');
+        console.log(`Task: ${task.entityName} (${task.entityType})`);
+        console.log(`Length: ${err.rawResponseLength} characters`);
+        console.log(`Preview (first 1000 chars):`);
+        console.log(err.rawResponse.substring(0, 1000));
+        console.log('=== END RAW RESPONSE ===');
+      }
+
       await storage.createLog({
         logLevel: 'error',
         logMessage: retryMessage,
-        queueTaskId: task.id
+        queueTaskId: task.id,
+        entityType: task.entityType,
+        entityId: task.entityId,
+        accountId: account.id,
+        metadata: logMetadata
       });
     } finally {
       await scraper.close();
