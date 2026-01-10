@@ -606,60 +606,67 @@ export class GeminiScraper {
       });
       await this.log(`🔍 Response container: ${JSON.stringify(responseContainerInfo, null, 2)}`, 'info');
 
-      await this.log("📋 Extracting JSON from code block (bypassing clipboard)", 'info');
+      await this.log("📋 Extracting JSON using delimiter strategy", 'info');
 
-      // CRITICAL FIX: Use JavaScript evaluation to extract immediately
-      // Playwright's textContent() waits for stability and times out on syntax-highlighted code
+      // NEW STRATEGY: Use delimiters <<<JSON_START>>> and <<<JSON_END>>>
+      // This is more reliable than searching for specific code block classes
       let responseText = "";
       let copySuccess = false;
 
-      // Extract using JavaScript evaluation (instant, no waiting)
+      // Extract using JavaScript evaluation - get entire last response container
       responseText = await this.page.evaluate(() => {
-        // DEBUG: Log all elements found
-        const debugInfo: any = { selectors: [] };
-
-        // Try multiple selectors in order of preference
-        const selectors = [
-          '.formatted-code-block-internal-container',  // Full code block container
-          'code[data-test-id="code-content"]',
-          'code.code-container',
-          'div.code-block',
-          'pre code'
+        // Selectors for the entire model response container (message bubble)
+        const containerSelectors = [
+          'message-content',  // Latest Gemini UI
+          'model-response',
+          '.model-response-text',
+          '[data-message-author-role="model"]',
+          '.response-container'
         ];
 
-        for (const selector of selectors) {
+        // Find the last response container
+        let responseContainer: HTMLElement | null = null;
+        for (const selector of containerSelectors) {
           const elements = Array.from(document.querySelectorAll(selector));
-          debugInfo.selectors.push({
-            selector,
-            count: elements.length,
-            lastLength: elements.length > 0 ? (elements[elements.length - 1] as HTMLElement).textContent?.length || 0 : 0
-          });
-
-          // Get the last matching element (latest response)
-          const element = elements[elements.length - 1] as HTMLElement;
-          if (element) {
-            // Try both textContent and innerText
-            const text = element.textContent || element.innerText || '';
-            if (text.length > 100) {
-              console.log(`SUCCESS: Found ${text.length} chars in ${selector}`);
-              return text;
-            }
+          if (elements.length > 0) {
+            responseContainer = elements[elements.length - 1] as HTMLElement;
+            console.log(`Found response container using: ${selector}`);
+            break;
           }
         }
 
-        console.error('FAILED TO FIND CODE BLOCK:', JSON.stringify(debugInfo));
+        if (!responseContainer) {
+          console.error('No response container found');
+          return '';
+        }
+
+        // Get the full innerText of the entire response
+        const fullText = responseContainer.innerText || responseContainer.textContent || '';
+        console.log(`Extracted full response text: ${fullText.length} characters`);
+
+        // Use regex to extract content between delimiters
+        const regex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/;
+        const match = fullText.match(regex);
+
+        if (match && match[1]) {
+          const jsonContent = match[1].trim();
+          console.log(`SUCCESS: Extracted JSON from delimiters: ${jsonContent.length} characters`);
+          return jsonContent;
+        }
+
+        console.error('Delimiters not found in response');
         return '';
       });
 
-      if (responseText && responseText.length > 100) {
-        await this.log(`✓ Extracted JSON directly via JavaScript (${responseText.length} characters)`, 'success');
+      if (responseText && responseText.length > 10) {
+        await this.log(`✓ Extracted JSON using delimiters (${responseText.length} characters)`, 'success');
         copySuccess = true;
       }
 
-      // NO FALLBACK - If code extraction fails, throw error
+      // If delimiter extraction fails, throw specific error
       if (!copySuccess || !responseText) {
-        await this.log("❌ CRITICAL: Code block not found - cannot extract JSON", 'error');
-        throw new Error("Code block not found. Gemini may not have returned JSON in a code block.");
+        await this.log("❌ CRITICAL: JSON delimiters not found in response", 'error');
+        throw new Error("Scraper Error: JSON delimiters not found in response.");
       }
 
       await this.log(`✅ Raw JSON extracted (${responseText.length} characters)`, 'success');
