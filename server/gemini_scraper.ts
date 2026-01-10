@@ -806,14 +806,58 @@ export class GeminiScraper {
       await this.log(`📝 Prompt preview: "${prompt.substring(0, 100)}..."`, 'info');
 
       // CRITICAL: Start a NEW CHAT to avoid old context/hallucination
-      await this.log("🆕 Starting new chat to avoid context pollution", 'info');
-      await this.page.goto('https://gemini.google.com/app', {
-        waitUntil: 'domcontentloaded',
+      await this.log("🆕 Forcing fresh chat to avoid context pollution", 'info');
+      await this.page.goto('https://gemini.google.com/app?hl=en', {
+        waitUntil: 'networkidle',
         timeout: 30000
       });
 
       await this.log("⏳ Waiting for chat interface to be ready", 'info');
-      await this.page.waitForTimeout(2000);
+      await this.page.waitForTimeout(3000);
+
+      // Force click "New Chat" button to ensure clean slate
+      await this.log("🔄 Looking for 'New Chat' button to force reset...", 'info');
+      const newChatSelectors = [
+        '[aria-label="New chat"]',
+        'button[aria-label*="New chat" i]',
+        'button:has-text("New chat")',
+        '.new-chat-button',
+        '[data-test-id="new-chat"]',
+        'button[title*="New chat" i]'
+      ];
+
+      let newChatClicked = false;
+      for (const selector of newChatSelectors) {
+        try {
+          const button = this.page.locator(selector).first();
+          if (await button.isVisible({ timeout: 2000 })) {
+            await button.click();
+            await this.log(`✓ Clicked 'New Chat' button with selector: ${selector}`, 'success');
+            await this.page.waitForTimeout(2000);
+            newChatClicked = true;
+            break;
+          }
+        } catch {}
+      }
+
+      if (!newChatClicked) {
+        await this.log("⚠️ Could not find 'New Chat' button - assuming we're on a fresh page", 'warning');
+      }
+
+      // Verify blank state - check for greeting text or empty chat
+      const isBlank = await this.page.evaluate(() => {
+        const bodyText = document.body.innerText;
+        return bodyText.includes('Hello') ||
+               bodyText.includes('How can I help') ||
+               document.querySelectorAll('.message-content, .model-response-text').length === 0;
+      });
+
+      if (isBlank) {
+        await this.log("✓ Verified blank chat state", 'success');
+      } else {
+        await this.log("⚠️ Chat may not be blank - proceeding anyway", 'warning');
+      }
+
       await this.log("✓ Chat interface ready", 'success');
 
       // SCREENSHOTS DISABLED for faster processing
@@ -1138,24 +1182,39 @@ export class GeminiScraper {
       responseText = await this.page.evaluate(() => {
         console.log('=== STARTING LAST-CHILD PRIORITY EXTRACTION ===');
 
-        // Step 1: Find ALL potential message containers using broad selector
+        // Step 1: Find ALL potential MODEL response containers (exclude user messages)
         const allBubbles = Array.from(document.querySelectorAll(
-          '.model-response-text, [data-message-author-role="model"], .message-content, message-content, .response-container'
+          '.model-response-text, [data-message-author-role="model"], .message-content, message-content, .response-container, [class*="model-response"], [class*="assistant-message"], .agent-turn, .markdown, .message-text'
         )) as HTMLElement[];
 
-        console.log(`Step 1: Found ${allBubbles.length} total message containers`);
+        console.log(`Step 1: Found ${allBubbles.length} total potential model message containers`);
 
-        // Step 2: Filter - Keep only elements that contain <<<JSON_START>>>
-        const bubblesWithDelimiter = allBubbles.filter(bubble => {
+        // Filter out user messages by checking for user-specific attributes
+        const modelBubbles = allBubbles.filter(bubble => {
+          const role = bubble.getAttribute('data-message-author-role');
+          const classes = bubble.className || '';
+
+          // Exclude if explicitly marked as user message
+          if (role === 'user' || classes.includes('user-message') || classes.includes('user-turn')) {
+            return false;
+          }
+
+          return true;
+        });
+
+        console.log(`Step 1b: Filtered to ${modelBubbles.length} model-only containers (excluded user messages)`);
+
+        // Step 2: Filter - Keep only MODEL bubbles that contain <<<JSON_START>>>
+        const bubblesWithDelimiter = modelBubbles.filter(bubble => {
           const text = bubble.innerText || bubble.textContent || '';
           const hasDelimiter = text.includes('<<<JSON_START>>>');
           if (hasDelimiter) {
-            console.log(`Found bubble with delimiter (${text.length} chars)`);
+            console.log(`Found MODEL bubble with delimiter (${text.length} chars)`);
           }
           return hasDelimiter;
         });
 
-        console.log(`Step 2: Filtered to ${bubblesWithDelimiter.length} containers with delimiters`);
+        console.log(`Step 2: Filtered to ${bubblesWithDelimiter.length} MODEL containers with delimiters (ignoring user prompt)`);
 
         if (bubblesWithDelimiter.length === 0) {
           console.error('CRITICAL: No containers found with <<<JSON_START>>> delimiter');
@@ -1219,13 +1278,14 @@ export class GeminiScraper {
           return '';
         }
 
-        // Step 3: Select the LAST element from filtered list
+        // Step 3: Select the ABSOLUTE LAST element from filtered list (most recent model response)
         const lastBubble = bubblesWithDelimiter[bubblesWithDelimiter.length - 1];
-        console.log(`Step 3: Selected LAST container from filtered list`);
+        console.log(`Step 3: Selected ABSOLUTE LAST MODEL bubble (index ${bubblesWithDelimiter.length - 1} of ${bubblesWithDelimiter.length})`);
 
-        // Step 4: Extract innerText
+        // Step 4: Extract innerText from the last model response ONLY
         const fullText = lastBubble.innerText || lastBubble.textContent || '';
-        console.log(`Step 4: Extracted innerText: ${fullText.length} characters`);
+        console.log(`Step 4: Extracted innerText from LAST MODEL bubble: ${fullText.length} characters`);
+        console.log(`Step 4b: First 200 chars of extracted text: ${fullText.substring(0, 200)}`);
 
         // Step 5: Run STRICT regex to find content between delimiters
         console.log('Step 5: Attempting STRICT regex (with both start and end tags)...');
