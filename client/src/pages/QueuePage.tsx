@@ -1,7 +1,7 @@
 import { useQueue } from "@/hooks/use-dashboard-data";
 import { PageHeader } from "@/components/PageHeader";
 import { format } from "date-fns";
-import { Clock, CheckCircle, AlertCircle, Loader2, Edit2, Trash2 } from "lucide-react";
+import { Clock, CheckCircle, AlertCircle, Loader2, Edit2, Trash2, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -58,6 +58,32 @@ export default function QueuePage() {
       } catch (err: any) {
         toast({ title: "Error", description: err.message, variant: "destructive" });
       }
+    }
+  };
+
+  const handleRetry = async (item: any) => {
+    try {
+      const res = await fetch('/api/queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entityType: item.entityType,
+          entityId: item.entityId,
+          entityName: item.entityName,
+          promptText: item.promptText,
+          geminiModel: item.geminiModel,
+          priority: item.priority || 0
+        })
+      });
+      if (!res.ok) throw new Error('Failed to retry task');
+      toast({
+        title: "Task Retried",
+        description: `${item.entityName} has been added back to queue`
+      });
+      // Refresh queue data
+      window.location.reload();
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
     }
   };
 
@@ -129,6 +155,13 @@ export default function QueuePage() {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex gap-2">
+                        <button
+                          onClick={() => handleRetry(item)}
+                          className="text-muted-foreground hover:text-green-500 transition-colors"
+                          title="Retry - Add same task to queue"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                        </button>
                         {item.status === 'queued' && (
                           <button
                             onClick={() => handleEditPriority(item.id, item.priority || 0)}
