@@ -11,6 +11,7 @@ export class GeminiScraper {
   private password: string = "";
   private isLoggedIn: boolean = false;
   private sessionDir: string = "";
+  private sessionLoadedFromSource: boolean = false; // Track if session was loaded from DB/env/file
 
   private async log(message: string, level: 'info' | 'success' | 'warning' | 'error' = 'info') {
     console.log(`[${level}] ${message}`);
@@ -113,6 +114,7 @@ export class GeminiScraper {
           });
 
           await this.log('✅ Session loaded from database (will skip login)', 'success');
+          this.sessionLoadedFromSource = true;
         } catch (parseError: any) {
           await this.log(`⚠️ Failed to parse session data from database: ${parseError.message}`, 'warning');
           await this.log('   Falling back to environment/file session...', 'warning');
@@ -139,6 +141,7 @@ export class GeminiScraper {
             });
 
             await this.log('✅ Session loaded from Environment Variable (will skip login)', 'success');
+            this.sessionLoadedFromSource = true;
           } catch (parseError: any) {
             await this.log(`⚠️ Failed to parse GEMINI_SESSION_JSON: ${parseError.message}`, 'warning');
             await this.log('   Falling back to file-based session...', 'warning');
@@ -164,6 +167,7 @@ export class GeminiScraper {
           });
 
           await this.log('✅ Global session file loaded successfully (will skip login)', 'success');
+          this.sessionLoadedFromSource = true;
         }
       }
 
@@ -187,6 +191,7 @@ export class GeminiScraper {
           });
 
           await this.log('✓ Session loaded successfully (will skip login)', 'success');
+          this.sessionLoadedFromSource = true;
         }
       }
 
@@ -380,9 +385,10 @@ export class GeminiScraper {
       // const screenshotPath = `/tmp/gemini-step1-${Date.now()}.png`;
       // await this.page.screenshot({ path: screenshotPath, fullPage: true });
 
-      // Wait for page to settle
-      await this.log("⏳ Waiting 5s for page to settle...", 'info');
-      await this.page.waitForTimeout(5000);
+      // Wait for page to settle - longer wait if session was loaded
+      const waitTime = this.sessionLoadedFromSource ? 10000 : 5000;
+      await this.log(`⏳ Waiting ${waitTime/1000}s for page to settle...`, 'info');
+      await this.page.waitForTimeout(waitTime);
       await this.log("✓ Page settled", 'success');
 
       // Check if we're already logged in (session worked!)
@@ -392,14 +398,17 @@ export class GeminiScraper {
         'textarea[aria-label*="prompt"]',
         'div[contenteditable="true"]',
         'textarea',
-        '.chat-input'
+        '.chat-input',
+        '[data-test-id*="input"]',
+        '[aria-label*="Message"]'
       ];
 
       let alreadyLoggedIn = false;
       for (const selector of chatBoxSelectors) {
         try {
           const element = this.page.locator(selector).first();
-          if (await element.isVisible({ timeout: 3000 })) {
+          // Longer timeout for session-based login (10s instead of 3s)
+          if (await element.isVisible({ timeout: this.sessionLoadedFromSource ? 10000 : 3000 })) {
             alreadyLoggedIn = true;
             await this.log(`✓ Already logged in - found chat interface with selector: ${selector}`, 'success');
             break;
@@ -411,6 +420,12 @@ export class GeminiScraper {
         this.isLoggedIn = true;
         await this.saveSession();
         return;
+      }
+
+      // Need to login - check if session expired
+      if (this.sessionLoadedFromSource) {
+        await this.log(`⚠️ Session loaded but not logged in - session may have expired`, 'warning');
+        await this.log(`💡 Tip: Re-login manually via Accounts page to refresh session`, 'warning');
       }
 
       // Need to login - look for sign in button
