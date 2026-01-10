@@ -1071,37 +1071,37 @@ export class GeminiScraper {
 
         if (bubblesWithDelimiter.length === 0) {
           console.error('CRITICAL: No containers found with <<<JSON_START>>> delimiter');
-          console.error('=== ATTEMPTING DIRECT PAGE TEXT EXTRACTION AS FALLBACK ===');
+          console.error('=== ATTEMPTING GLOBAL BODY FALLBACK (REGEX ON FULL PAGE) ===');
 
-          // Check if delimiter exists anywhere in the page
-          const pageText = document.body.innerText;
-          const pageHasDelimiter = pageText.includes('<<<JSON_START>>>');
-          console.error(`Delimiter exists in page: ${pageHasDelimiter}`);
+          // FALLBACK: Extract directly from entire page text using regex
+          const fullPageText = document.body.innerText;
+          console.log(`Attempting regex on full page text (${fullPageText.length} chars)`);
 
-          if (pageHasDelimiter) {
-            // Try to extract from page text directly
-            console.log('Delimiter found in page but not in message containers. Attempting direct extraction...');
-            const startIndex = pageText.indexOf('<<<JSON_START>>>');
-            const endIndex = pageText.indexOf('<<<JSON_END>>>', startIndex);
+          // Try STRICT regex first (both start and end delimiters)
+          const strictRegex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/;
+          const strictMatch = fullPageText.match(strictRegex);
 
-            if (startIndex !== -1) {
-              console.log(`Found start delimiter at index ${startIndex}`);
-              if (endIndex !== -1) {
-                console.log(`Found end delimiter at index ${endIndex}`);
-                const extracted = pageText.substring(startIndex + 16, endIndex).trim(); // 16 = length of "<<<JSON_START>>>"
-                console.log(`Direct extraction successful: ${extracted.length} chars`);
-                return extracted;
-              } else {
-                // End delimiter not found, take everything after start
-                const extracted = pageText.substring(startIndex + 16).trim();
-                console.warn(`End delimiter not found, extracted ${extracted.length} chars from start to end of page`);
-                return extracted;
-              }
-            }
+          if (strictMatch && strictMatch[1]) {
+            const extracted = strictMatch[1].trim();
+            console.log(`✅ STRICT regex match on full page: ${extracted.length} chars`);
+            return extracted;
           }
 
+          // Try FALLBACK regex (start delimiter to end of text)
+          console.warn('STRICT regex failed on full page, trying FALLBACK regex...');
+          const fallbackRegex = /<<<JSON_START>>>([\s\S]*)$/;
+          const fallbackMatch = fullPageText.match(fallbackRegex);
+
+          if (fallbackMatch && fallbackMatch[1]) {
+            const extracted = fallbackMatch[1].trim();
+            console.log(`⚠️ FALLBACK regex match on full page: ${extracted.length} chars (end delimiter may be missing)`);
+            return extracted;
+          }
+
+          // If even regex on full page fails, log forensics
+          console.error('❌ Both STRICT and FALLBACK regex failed on full page text');
           console.error('=== FORENSIC DEBUG: First 1000 chars of document.body.innerText ===');
-          console.error(pageText.substring(0, 1000));
+          console.error(fullPageText.substring(0, 1000));
           console.error('=== END FORENSIC DEBUG ===');
           return '';
         }
