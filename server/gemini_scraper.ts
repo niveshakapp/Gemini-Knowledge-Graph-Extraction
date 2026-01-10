@@ -65,6 +65,7 @@ export class GeminiScraper {
       await this.log("✓ Browser launched successfully", 'success');
 
       // Try to load existing session if email is provided
+      await this.log("🔍 Checking for existing session...", 'info');
       const hasSession = email ? await this.sessionExists(email) : false;
 
       if (hasSession && email) {
@@ -79,12 +80,15 @@ export class GeminiScraper {
           userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         });
 
-        await this.log('✓ Session loaded successfully', 'success');
+        await this.log('✓ Session loaded successfully (will skip login)', 'success');
       } else {
+        await this.log("ℹ️ No existing session found, will create new one", 'info');
+
         if (email) {
           this.sessionDir = this.getSessionDir(email);
           // Create session directory if it doesn't exist
           if (!fs.existsSync(this.sessionDir)) {
+            await this.log(`📁 Creating session directory: ${this.sessionDir}`, 'info');
             fs.mkdirSync(this.sessionDir, { recursive: true });
           }
         }
@@ -126,15 +130,17 @@ export class GeminiScraper {
 
       await this.log("✓ Page loaded successfully", 'success');
 
-      // Take screenshot for debugging
-      const screenshotPath = `/tmp/gemini-step1-${Date.now()}.png`;
-      await this.page.screenshot({ path: screenshotPath, fullPage: true });
-      await this.log(`📸 Screenshot saved: ${screenshotPath}`, 'info');
+      // SCREENSHOTS DISABLED for faster processing
+      // const screenshotPath = `/tmp/gemini-step1-${Date.now()}.png`;
+      // await this.page.screenshot({ path: screenshotPath, fullPage: true });
 
       // Wait for page to settle
+      await this.log("⏳ Waiting 5s for page to settle...", 'info');
       await this.page.waitForTimeout(5000);
+      await this.log("✓ Page settled", 'success');
 
       // Check if we're already logged in (session worked!)
+      await this.log("🔍 Checking if already logged in...", 'info');
       const chatBoxSelectors = [
         'textarea[placeholder*="Enter a prompt"]',
         'textarea[aria-label*="prompt"]',
@@ -243,12 +249,13 @@ export class GeminiScraper {
         await this.page.keyboard.press('Enter');
       }
 
+      await this.log("⏳ Waiting 5s for password page...", 'info');
       await this.page.waitForTimeout(5000);
+      await this.log("✓ Password page loaded", 'success');
 
-      // Take screenshot after email step
-      const screenshot2Path = `/tmp/gemini-step2-${Date.now()}.png`;
-      await this.page.screenshot({ path: screenshot2Path, fullPage: true });
-      await this.log(`📸 Screenshot saved: ${screenshot2Path}`, 'info');
+      // SCREENSHOTS DISABLED for faster processing
+      // const screenshot2Path = `/tmp/gemini-step2-${Date.now()}.png`;
+      // await this.page.screenshot({ path: screenshot2Path, fullPage: true });
 
       // Enter password
       await this.log("🔒 Entering password", 'info');
@@ -306,21 +313,25 @@ export class GeminiScraper {
         await this.page.keyboard.press('Enter');
       }
 
+      await this.log("⏳ Waiting 8s for login completion...", 'info');
       await this.page.waitForTimeout(8000);
+      await this.log("✓ Login wait completed", 'success');
 
-      // Take screenshot after login
-      const screenshot3Path = `/tmp/gemini-step3-${Date.now()}.png`;
-      await this.page.screenshot({ path: screenshot3Path, fullPage: true });
-      await this.log(`📸 Screenshot saved: ${screenshot3Path}`, 'info');
+      // SCREENSHOTS DISABLED for faster processing
+      // const screenshot3Path = `/tmp/gemini-step3-${Date.now()}.png`;
+      // await this.page.screenshot({ path: screenshot3Path, fullPage: true });
 
       // Check for 2FA
+      await this.log("🔍 Checking for 2FA requirement...", 'info');
       const has2FA = await this.page.locator('text=/verify/i').isVisible({ timeout: 3000 }).catch(() => false);
       if (has2FA) {
         await this.log("⚠️ 2FA verification detected - cannot proceed", 'error');
         throw new Error("2FA verification required. Please disable 2FA or use app-specific password.");
       }
+      await this.log("✓ No 2FA required", 'success');
 
       // Verify we're on Gemini
+      await this.log("🔍 Verifying Gemini chat interface is present...", 'info');
       const onGemini = await this.page.locator('textarea, div[contenteditable="true"]').first().isVisible({ timeout: 10000 }).catch(() => false);
 
       if (onGemini) {
@@ -334,14 +345,14 @@ export class GeminiScraper {
     } catch (error: any) {
       await this.log(`❌ Login failed: ${error.message}`, 'error');
 
-      // Final screenshot on error
-      if (this.page) {
-        try {
-          const errorScreenshot = `/tmp/gemini-error-${Date.now()}.png`;
-          await this.page.screenshot({ path: errorScreenshot, fullPage: true });
-          await this.log(`📸 Error screenshot: ${errorScreenshot}`, 'error');
-        } catch {}
-      }
+      // SCREENSHOTS DISABLED for faster processing
+      // if (this.page) {
+      //   try {
+      //     const errorScreenshot = `/tmp/gemini-error-${Date.now()}.png`;
+      //     await this.page.screenshot({ path: errorScreenshot, fullPage: true });
+      //     await this.log(`📸 Error screenshot: ${errorScreenshot}`, 'error');
+      //   } catch {}
+      // }
 
       throw new Error(`Google login failed: ${error.message}`);
     }
@@ -369,24 +380,14 @@ export class GeminiScraper {
 
       await this.log("⏳ Waiting for chat interface to be ready", 'info');
       await this.page.waitForTimeout(2000);
+      await this.log("✓ Chat interface ready", 'success');
 
-      // DEBUG: Take screenshot before model selection
-      const timestamp1 = Date.now();
-      await this.page.screenshot({ path: `/tmp/gemini-before-model-select-${timestamp1}.png` });
-      await this.log(`📸 Debug screenshot: /tmp/gemini-before-model-select-${timestamp1}.png`, 'info');
+      // SCREENSHOTS DISABLED for faster processing
+      // const timestamp1 = Date.now();
+      // await this.page.screenshot({ path: `/tmp/gemini-before-model-select-${timestamp1}.png` });
 
-      // DEBUG: Dump all buttons on page to find model selector
-      const allButtons = await this.page.evaluate(() => {
-        const buttons = Array.from(document.querySelectorAll('button'));
-        return buttons.map(btn => ({
-          text: btn.textContent?.trim().substring(0, 50),
-          ariaLabel: btn.getAttribute('aria-label'),
-          className: btn.className,
-          id: btn.id
-        })).filter(b => b.text || b.ariaLabel);
-      });
-      await this.log(`🔍 Found ${allButtons.length} buttons on page`, 'info');
-      await this.log(`📋 Sample buttons: ${JSON.stringify(allButtons.slice(0, 10), null, 2)}`, 'info');
+      // DEBUG BUTTON DUMP REMOVED - not needed in production
+      // const allButtons = await this.page.evaluate(() => { ... });
 
       // Select the model before entering prompt
       await this.log(`🎯 Selecting model: ${geminiModel}`, 'info');
@@ -423,14 +424,16 @@ export class GeminiScraper {
             }
 
             // Click to open model picker
+            await this.log(`🖱️ Clicking model selector button...`, 'info');
             await button.click();
-            await this.log(`🔄 Waiting for model menu to load...`, 'info');
+            await this.log(`✓ Model selector clicked`, 'success');
+            await this.log(`⏳ Waiting for model menu to load...`, 'info');
             await this.page.waitForTimeout(2000);  // Increased wait time
+            await this.log(`✓ Model menu loaded`, 'success');
 
-            // Take screenshot after clicking
-            const timestamp2 = Date.now();
-            await this.page.screenshot({ path: `/tmp/gemini-after-model-click-${timestamp2}.png` });
-            await this.log(`📸 After click: /tmp/gemini-after-model-click-${timestamp2}.png`, 'info');
+            // SCREENSHOTS DISABLED for faster processing
+            // const timestamp2 = Date.now();
+            // await this.page.screenshot({ path: `/tmp/gemini-after-model-click-${timestamp2}.png` });
 
             // Use data-test-id selectors from actual HTML
             const modelTestIdMap: Record<string, string> = {
@@ -441,24 +444,26 @@ export class GeminiScraper {
 
             const testId = modelTestIdMap[geminiModel];
             if (testId) {
+              await this.log(`🔍 Looking for model option: ${testId}`, 'info');
               const option = this.page.locator(`[data-test-id="${testId}"]`).first();
 
               // Wait for the option to be visible AND enabled (not disabled)
               try {
                 await option.waitFor({ state: 'visible', timeout: 5000 });
-                await this.log(`✓ Menu option visible: ${testId}`, 'info');
+                await this.log(`✓ Menu option visible: ${testId}`, 'success');
 
                 // Check if disabled
                 const isDisabled = await option.getAttribute('disabled');
                 const ariaDisabled = await option.getAttribute('aria-disabled');
 
                 if (isDisabled === 'true' || ariaDisabled === 'true') {
-                  await this.log(`⚠️ Option ${testId} is disabled, waiting for it to enable...`, 'warning');
-                  // Wait a bit more for it to enable
+                  await this.log(`⚠️ Option ${testId} is disabled, waiting 2s for it to enable...`, 'warning');
                   await this.page.waitForTimeout(2000);
+                  await this.log(`✓ Wait completed, attempting click...`, 'info');
                 }
 
                 // Force click using JavaScript if regular click fails
+                await this.log(`🖱️ Clicking model option via JavaScript...`, 'info');
                 await this.page.evaluate((selector) => {
                   const element = document.querySelector(`[data-test-id="${selector}"]`) as HTMLElement;
                   if (element) {
@@ -537,15 +542,17 @@ export class GeminiScraper {
       await this.page.waitForTimeout(1000);
       await this.log("✓ Prompt injected successfully", 'success');
 
-      await this.log("📤 Sending prompt to Gemini", 'info');
+      await this.log("📤 Sending prompt to Gemini (pressing Enter)...", 'info');
       await this.page.keyboard.press('Enter');
+      await this.log("✓ Prompt sent", 'success');
 
       await this.log("⏳ Waiting for Gemini response to complete...", 'info');
-
-      // Wait for response to finish generating (look for stop generating button to disappear)
+      await this.log("⏳ Initial 5s wait for response to start...", 'info');
       await this.page.waitForTimeout(5000);
+      await this.log("✓ Initial wait completed", 'success');
 
       // Wait for response to be complete by checking if generation stopped
+      await this.log("🔄 Monitoring generation status...", 'info');
       let waitTime = 0;
       const maxWaitTime = 120000; // 2 minutes max
       while (waitTime < maxWaitTime) {
@@ -554,8 +561,15 @@ export class GeminiScraper {
           await this.log("✓ Response generation completed", 'success');
           break;
         }
+        if (waitTime % 10000 === 0) {
+          await this.log(`⏳ Still generating... (${waitTime/1000}s elapsed)`, 'info');
+        }
         await this.page.waitForTimeout(2000);
         waitTime += 2000;
+      }
+
+      if (waitTime >= maxWaitTime) {
+        await this.log("⚠️ Maximum wait time reached (2 minutes)", 'warning');
       }
 
       await this.page.waitForTimeout(2000); // Extra wait for UI to settle
@@ -666,19 +680,24 @@ export class GeminiScraper {
       }
 
       await this.log(`✅ Raw JSON extracted (${responseText.length} characters)`, 'success');
+      await this.log(`📊 JSON Preview: ${responseText.substring(0, 150)}...`, 'info');
 
       // ALWAYS use raw JSON - NEVER parse into knowledge graph format
+      await this.log("🔍 Parsing JSON...", 'info');
       let knowledgeGraph: any;
       try {
         knowledgeGraph = JSON.parse(responseText);
         await this.log("✓ JSON parsed successfully - using as-is", 'success');
-      } catch (jsonError) {
-        await this.log("❌ CRITICAL: Response is not valid JSON", 'error');
+      } catch (jsonError: any) {
+        await this.log(`❌ CRITICAL: Response is not valid JSON - ${jsonError.message}`, 'error');
+        await this.log(`📄 Invalid JSON snippet: ${responseText.substring(0, 500)}`, 'error');
         throw new Error("Gemini response is not valid JSON");
       }
 
       const nodeCount = knowledgeGraph.nodes?.length || 0;
-      await this.log(`✓ Knowledge graph ready with ${nodeCount} nodes`, 'success');
+      const edgeCount = knowledgeGraph.edges?.length || 0;
+      await this.log(`✓ Knowledge graph ready: ${nodeCount} nodes, ${edgeCount} edges`, 'success');
+      await this.log(`🎉 Extraction completed successfully!`, 'success');
 
       return knowledgeGraph;
 
