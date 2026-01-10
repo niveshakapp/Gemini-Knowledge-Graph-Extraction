@@ -738,12 +738,17 @@ export class GeminiScraper {
       // Select the model before entering prompt
       await this.log(`🎯 Selecting model: ${geminiModel}`, 'info');
       try {
-        // Look for model selector button using actual selectors from Gemini HTML
+        // Look for model selector button using multiple strategies
         const modelSelectors = [
-          'div[data-test-id="bard-mode-menu-button"]',  // Container div from HTML
-          'button.input-area-switch',  // The actual model button
-          'button:has-text("Fast")',
-          'button:has-text("Pro")'
+          'button[aria-label*="model" i]',  // Button with "model" in aria-label
+          'button[aria-label*="Gemini" i]', // Button with "Gemini" in aria-label
+          'button.input-area-switch',  // Class-based selector
+          'div[data-test-id="bard-mode-menu-button"]',  // Data attribute
+          'button:has-text("Pro")',  // Text-based for Pro
+          'button:has-text("Fast")', // Text-based for Fast/Flash
+          'button:has-text("Gemini")', // Generic Gemini button
+          '[role="button"]:has-text("1.5")', // Version number
+          '[role="button"]:has-text("2.0")'  // Version number
         ];
 
         let modelSelectorFound = false;
@@ -858,32 +863,119 @@ export class GeminiScraper {
 
       await this.page.waitForTimeout(1000);
 
-      // Find and fill the prompt textarea
+      // Find and fill the prompt textarea with multiple selector strategies
       await this.log("🔍 Locating prompt input box", 'info');
-      const promptBox = this.page.locator('div[contenteditable="true"]').first();
-      await promptBox.waitFor({ timeout: 10000, state: 'visible' });
+
+      const promptSelectors = [
+        'textarea[placeholder*="Enter a prompt" i]',  // Textarea with prompt placeholder
+        'textarea[aria-label*="prompt" i]',  // Textarea with prompt aria-label
+        'div[contenteditable="true"]',  // Contenteditable div
+        'textarea[data-test-id*="input"]',  // Data attribute
+        'textarea',  // Any textarea as fallback
+        '.ql-editor',  // Quill editor class
+        '[role="textbox"]'  // Role-based selector
+      ];
+
+      let promptBox = null;
+      let foundSelector = '';
+
+      for (const selector of promptSelectors) {
+        try {
+          const box = this.page.locator(selector).first();
+          await box.waitFor({ timeout: 3000, state: 'visible' });
+          promptBox = box;
+          foundSelector = selector;
+          await this.log(`✓ Prompt box found with selector: ${selector}`, 'success');
+          break;
+        } catch (e) {
+          await this.log(`⚠️ Selector ${selector} not found, trying next...`, 'info');
+        }
+      }
+
+      if (!promptBox) {
+        // FORENSIC: Dump page info to help debug
+        await this.log("🔍 FORENSIC: Dumping page elements for debugging", 'error');
+
+        const pageInfo = await this.page.evaluate(() => {
+          const textareas = Array.from(document.querySelectorAll('textarea'));
+          const editables = Array.from(document.querySelectorAll('[contenteditable="true"]'));
+          const textboxes = Array.from(document.querySelectorAll('[role="textbox"]'));
+
+          return {
+            url: window.location.href,
+            textareas: textareas.map(t => ({
+              tag: t.tagName,
+              placeholder: t.placeholder,
+              ariaLabel: t.getAttribute('aria-label'),
+              id: t.id,
+              classes: t.className
+            })),
+            editables: editables.map(e => ({
+              tag: e.tagName,
+              id: e.id,
+              classes: e.className
+            })),
+            textboxes: textboxes.map(t => ({
+              tag: t.tagName,
+              id: t.id,
+              classes: t.className,
+              ariaLabel: t.getAttribute('aria-label')
+            })),
+            bodyText: document.body.innerText.substring(0, 500)
+          };
+        });
+
+        await this.log(`📄 Page URL: ${pageInfo.url}`, 'error');
+        await this.log(`📄 Textareas found: ${JSON.stringify(pageInfo.textareas, null, 2)}`, 'error');
+        await this.log(`📄 Editables found: ${JSON.stringify(pageInfo.editables, null, 2)}`, 'error');
+        await this.log(`📄 Textboxes found: ${JSON.stringify(pageInfo.textboxes, null, 2)}`, 'error');
+        await this.log(`📄 Page text: ${pageInfo.bodyText}`, 'error');
+
+        throw new Error('Could not locate prompt input box with any selector. See forensic logs above.');
+      }
 
       await this.log("✓ Prompt box located", 'success');
       await this.log("📝 Injecting prompt text via JavaScript (bypassing keyboard simulation for large prompts)...", 'info');
 
       // Use JavaScript evaluation to directly set the content
       // This bypasses keyboard simulation and handles extremely long prompts instantly
-      await this.page.evaluate((text) => {
-        const editableDiv = document.querySelector('div[contenteditable="true"]') as HTMLElement;
-        if (editableDiv) {
-          // Focus first
-          editableDiv.focus();
+      await this.page.evaluate((data) => {
+        // Try all possible selectors to find the input
+        const selectors = [
+          'textarea[placeholder*="Enter a prompt" i]',
+          'textarea[aria-label*="prompt" i]',
+          'div[contenteditable="true"]',
+          'textarea[data-test-id*="input"]',
+          'textarea',
+          '.ql-editor',
+          '[role="textbox"]'
+        ];
 
-          // Clear and set content using textContent only (avoids TrustedHTML issues)
-          editableDiv.textContent = text;
+        let element: HTMLElement | null = null;
+
+        for (const selector of selectors) {
+          element = document.querySelector(selector) as HTMLElement;
+          if (element) break;
+        }
+
+        if (element) {
+          // Focus first
+          element.focus();
+
+          // Set content based on element type
+          if (element.tagName === 'TEXTAREA') {
+            (element as HTMLTextAreaElement).value = data.text;
+          } else {
+            element.textContent = data.text;
+          }
 
           // Trigger input and change events to notify Gemini
           const inputEvent = new Event('input', { bubbles: true });
           const changeEvent = new Event('change', { bubbles: true });
-          editableDiv.dispatchEvent(inputEvent);
-          editableDiv.dispatchEvent(changeEvent);
+          element.dispatchEvent(inputEvent);
+          element.dispatchEvent(changeEvent);
         }
-      }, prompt);
+      }, { text: prompt, selector: foundSelector });
 
       await this.page.waitForTimeout(1000);
       await this.log("✓ Prompt injected successfully", 'success');
