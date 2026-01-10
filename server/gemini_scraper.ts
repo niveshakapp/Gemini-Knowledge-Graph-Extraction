@@ -481,6 +481,14 @@ export class GeminiScraper {
       // Track if email entry step is already completed (e.g., via Account Chooser click)
       let emailStepCompleted = false;
 
+      // Define variables that will be used across both email and password sections
+      let nextClicked = false;
+      const nextButtonSelectors = [
+        'button:has-text("Next")',
+        '#identifierNext',
+        'button[type="button"]'
+      ];
+
       // HANDLE ACCOUNT CHOOSER SCREEN
       // Check if we're on the Account Chooser screen instead of the email input screen
       const isAccountChooser = currentUrl.includes('accountchooser') ||
@@ -609,13 +617,9 @@ export class GeminiScraper {
         // HUMAN-LIKE BEHAVIOR: Wait a bit before clicking Next (simulate reading)
         await this.page.waitForTimeout(800 + Math.random() * 1200);
 
-        const nextButtonSelectors = [
-          'button:has-text("Next")',
-          '#identifierNext',
-          'button[type="button"]'
-        ];
-
-        let nextClicked = false;
+        // nextButtonSelectors already defined at top of function
+        // nextClicked already defined at top of function
+        nextClicked = false; // Reset for email Next button
         for (const selector of nextButtonSelectors) {
           try {
             const nextButton = this.page.locator(selector).first();
@@ -727,7 +731,9 @@ export class GeminiScraper {
       // HUMAN-LIKE BEHAVIOR: Wait before clicking Next button after password
       await this.page.waitForTimeout(600 + Math.random() * 1000);
 
-      nextClicked = false;
+      // nextButtonSelectors already defined at top of function
+      // nextClicked already defined at top of function
+      nextClicked = false; // Reset for password Next button
       for (const selector of nextButtonSelectors) {
         try {
           const nextButton = this.page.locator(selector).first();
