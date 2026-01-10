@@ -44,7 +44,7 @@ export class GeminiScraper {
     return fs.existsSync(sessionPath);
   }
 
-  async init(email: string = "") {
+  async init(email: string = "", sessionData?: string) {
     try {
       await this.log("🚀 Initializing browser...", 'info');
 
@@ -97,32 +97,57 @@ export class GeminiScraper {
 
       await this.log("✓ Browser launched successfully", 'success');
 
-      // PRIORITY 1: Check for Environment Variable Session (for Render/GCP deployment)
-      const envSessionJson = process.env.GEMINI_SESSION_JSON;
-
-      if (envSessionJson) {
+      // PRIORITY 1: Check for session data passed directly (from database)
+      if (sessionData) {
         try {
-          await this.log("🔄 Loading session from Environment Variable (GEMINI_SESSION_JSON)", 'info');
+          await this.log("🔄 Loading session from database (account session)", 'info');
 
-          const sessionData = JSON.parse(envSessionJson);
+          const parsedSession = JSON.parse(sessionData);
 
           this.context = await this.browser.newContext({
-            storageState: sessionData,
+            storageState: parsedSession,
             viewport: { width: 1920, height: 1080 },
             userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
             locale: 'en-US',
             timezoneId: 'America/New_York'
           });
 
-          await this.log('✅ Session loaded from Environment Variable (will skip login)', 'success');
+          await this.log('✅ Session loaded from database (will skip login)', 'success');
         } catch (parseError: any) {
-          await this.log(`⚠️ Failed to parse GEMINI_SESSION_JSON: ${parseError.message}`, 'warning');
-          await this.log('   Falling back to file-based session...', 'warning');
+          await this.log(`⚠️ Failed to parse session data from database: ${parseError.message}`, 'warning');
+          await this.log('   Falling back to environment/file session...', 'warning');
           // Will fall through to next priority
         }
       }
 
-      // PRIORITY 2: Check for global manual login session file (gemini_session.json)
+      // PRIORITY 2: Check for Environment Variable Session (for Render/GCP deployment)
+      if (!this.context) {
+        const envSessionJson = process.env.GEMINI_SESSION_JSON;
+
+        if (envSessionJson) {
+          try {
+            await this.log("🔄 Loading session from Environment Variable (GEMINI_SESSION_JSON)", 'info');
+
+            const envSession = JSON.parse(envSessionJson);
+
+            this.context = await this.browser.newContext({
+              storageState: envSession,
+              viewport: { width: 1920, height: 1080 },
+              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+              locale: 'en-US',
+              timezoneId: 'America/New_York'
+            });
+
+            await this.log('✅ Session loaded from Environment Variable (will skip login)', 'success');
+          } catch (parseError: any) {
+            await this.log(`⚠️ Failed to parse GEMINI_SESSION_JSON: ${parseError.message}`, 'warning');
+            await this.log('   Falling back to file-based session...', 'warning');
+            // Will fall through to next priority
+          }
+        }
+      }
+
+      // PRIORITY 3: Check for global manual login session file (gemini_session.json)
       if (!this.context) {
         const globalSessionPath = path.join(process.cwd(), 'gemini_session.json');
         const hasGlobalSession = fs.existsSync(globalSessionPath);

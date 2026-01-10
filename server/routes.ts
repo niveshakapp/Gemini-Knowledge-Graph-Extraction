@@ -142,6 +142,59 @@ export async function registerRoutes(
     }
   });
 
+  // Save session data for an account
+  app.post('/api/accounts/:id/save-session', requireAuth, async (req, res) => {
+    try {
+      const accountId = Number(req.params.id);
+      const { sessionData } = req.body;
+
+      if (!sessionData) {
+        return res.status(400).json({ message: 'Session data is required' });
+      }
+
+      // Validate it's valid JSON
+      let parsedSession;
+      try {
+        parsedSession = typeof sessionData === 'string' ? JSON.parse(sessionData) : sessionData;
+      } catch (e) {
+        return res.status(400).json({ message: 'Invalid JSON format' });
+      }
+
+      // Save to database
+      await storage.saveAccountSession(accountId, JSON.stringify(parsedSession));
+
+      await storage.createLog({
+        logLevel: 'success',
+        logMessage: `Session saved for account ID ${accountId}`,
+        accountId: accountId
+      });
+
+      res.json({ message: 'Session saved successfully' });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Get session status for an account
+  app.get('/api/accounts/:id/session-status', requireAuth, async (req, res) => {
+    try {
+      const accountId = Number(req.params.id);
+      const account = await storage.getAccountById(accountId);
+
+      if (!account) {
+        return res.status(404).json({ message: 'Account not found' });
+      }
+
+      res.json({
+        hasSession: !!account.sessionData,
+        accountName: account.accountName,
+        email: account.email
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get(api.queue.list.path, requireAuth, async (req, res) => {
     const data = await storage.getQueue();
     res.json(data);

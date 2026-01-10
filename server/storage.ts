@@ -17,9 +17,11 @@ export interface IStorage {
 
   // Accounts
   getAccounts(): Promise<GeminiAccount[]>;
+  getAccountById(id: number): Promise<GeminiAccount | undefined>;
   createAccount(account: InsertAccount): Promise<GeminiAccount>;
   deleteAccount(id: number): Promise<void>;
   updateAccount(id: number, updates: Partial<GeminiAccount>): Promise<GeminiAccount>;
+  saveAccountSession(id: number, sessionData: string): Promise<void>;
   getAvailableAccount(): Promise<GeminiAccount | undefined>;
   getAllAvailableAccounts(): Promise<GeminiAccount[]>;
   fixAccountsActiveStatus(): Promise<void>;
@@ -81,12 +83,26 @@ export class DatabaseStorage implements IStorage {
     await db.delete(geminiAccounts).where(eq(geminiAccounts.id, id));
   }
 
+  async getAccountById(id: number): Promise<GeminiAccount | undefined> {
+    const [account] = await db.select()
+      .from(geminiAccounts)
+      .where(eq(geminiAccounts.id, id))
+      .limit(1);
+    return account;
+  }
+
   async updateAccount(id: number, updates: Partial<GeminiAccount>): Promise<GeminiAccount> {
     const [updated] = await db.update(geminiAccounts)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(geminiAccounts.id, id))
       .returning();
     return updated;
+  }
+
+  async saveAccountSession(id: number, sessionData: string): Promise<void> {
+    await db.update(geminiAccounts)
+      .set({ sessionData, updatedAt: new Date() })
+      .where(eq(geminiAccounts.id, id));
   }
 
   async getAvailableAccount(): Promise<GeminiAccount | undefined> {

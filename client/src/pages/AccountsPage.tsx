@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useAccounts, useCreateAccount, useDeleteAccount } from "@/hooks/use-dashboard-data";
 import { PageHeader } from "@/components/PageHeader";
 import { format } from "date-fns";
-import { Shield, Plus, Trash2, CheckCircle, XCircle, Power } from "lucide-react";
+import { Shield, Plus, Trash2, CheckCircle, XCircle, Power, LogIn, Key } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"; // Assuming basic dialog exists or using manual overlay
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -17,6 +17,10 @@ export default function AccountsPage() {
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [newAccount, setNewAccount] = useState({ accountName: "", email: "", passwordEncrypted: "" });
+
+  const [sessionDialogOpen, setSessionDialogOpen] = useState(false);
+  const [selectedAccountForSession, setSelectedAccountForSession] = useState<any>(null);
+  const [sessionJsonInput, setSessionJsonInput] = useState("");
 
   const activateAllMutation = useMutation({
     mutationFn: async () => {
@@ -33,6 +37,34 @@ export default function AccountsPage() {
         title: "Accounts Activated",
         description: `Successfully activated ${data.count} Gemini accounts`
       });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  });
+
+  const saveSessionMutation = useMutation({
+    mutationFn: async ({ accountId, sessionData }: { accountId: number; sessionData: string }) => {
+      const res = await fetch(`/api/accounts/${accountId}/save-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionData })
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || 'Failed to save session');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.accounts.list.path] });
+      toast({
+        title: "Session Saved",
+        description: "Login session saved successfully! This account can now be used for extractions."
+      });
+      setSessionDialogOpen(false);
+      setSessionJsonInput("");
+      setSelectedAccountForSession(null);
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -70,6 +102,25 @@ export default function AccountsPage() {
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     }
+  };
+
+  const handleOpenSessionDialog = (account: any) => {
+    setSelectedAccountForSession(account);
+    setSessionDialogOpen(true);
+    setSessionJsonInput("");
+  };
+
+  const handleSaveSession = () => {
+    if (!selectedAccountForSession) return;
+    if (!sessionJsonInput.trim()) {
+      toast({ title: "Error", description: "Please paste the session JSON", variant: "destructive" });
+      return;
+    }
+
+    saveSessionMutation.mutate({
+      accountId: selectedAccountForSession.id,
+      sessionData: sessionJsonInput
+    });
   };
 
   return (
@@ -143,6 +194,68 @@ export default function AccountsPage() {
         </div>
       )}
 
+      {/* Session Login Dialog */}
+      {sessionDialogOpen && selectedAccountForSession && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border w-full max-w-2xl p-6 rounded-xl shadow-2xl animate-in zoom-in-95 duration-200">
+            <h2 className="text-xl font-bold mb-2">Setup Login Session</h2>
+            <p className="text-sm text-muted-foreground mb-6">
+              Account: <span className="font-medium text-foreground">{selectedAccountForSession.accountName}</span> ({selectedAccountForSession.email})
+            </p>
+
+            <div className="bg-secondary/30 border border-border rounded-lg p-4 mb-6 space-y-3">
+              <h3 className="font-semibold text-sm flex items-center gap-2">
+                <Key className="w-4 h-4" />
+                Instructions:
+              </h3>
+              <ol className="text-sm text-muted-foreground space-y-2 list-decimal list-inside">
+                <li>On your <strong>local machine</strong>, run: <code className="bg-background px-2 py-0.5 rounded text-primary font-mono text-xs">npm run login</code></li>
+                <li>A browser window will open - log in to Google with this account</li>
+                <li>Complete any 2FA/verification steps</li>
+                <li>Wait for the script to detect successful login</li>
+                <li>Copy the contents of <code className="bg-background px-2 py-0.5 rounded text-primary font-mono text-xs">gemini_session.json</code></li>
+                <li>Paste it below and click "Save Session"</li>
+              </ol>
+            </div>
+
+            <div className="space-y-3">
+              <label className="text-sm font-medium block">Paste Session JSON:</label>
+              <textarea
+                className="w-full bg-background border border-border rounded px-3 py-2 font-mono text-xs h-48 resize-none"
+                placeholder='{"cookies":[...],"origins":[...]}'
+                value={sessionJsonInput}
+                onChange={(e) => setSessionJsonInput(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                ⚠️ This session will be stored in the database and used for all future extractions.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-6">
+              <button
+                type="button"
+                onClick={() => {
+                  setSessionDialogOpen(false);
+                  setSessionJsonInput("");
+                  setSelectedAccountForSession(null);
+                }}
+                className="px-4 py-2 text-muted-foreground hover:text-foreground transition-colors"
+                disabled={saveSessionMutation.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveSession}
+                disabled={saveSessionMutation.isPending || !sessionJsonInput.trim()}
+                className="bg-primary text-primary-foreground px-6 py-2 rounded font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors"
+              >
+                {saveSessionMutation.isPending ? 'Saving...' : 'Save Session'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
         {isLoading ? <div className="col-span-full text-center py-10">Loading accounts...</div> : accounts?.map((account) => (
           <div key={account.id} className="bg-card border border-border rounded-xl p-6 shadow-sm hover:border-primary/30 transition-all group relative overflow-hidden">
@@ -167,8 +280,29 @@ export default function AccountsPage() {
               </div>
               
               <h3 className="text-lg font-bold truncate">{account.accountName}</h3>
-              <p className="text-sm text-muted-foreground truncate mb-6">{account.email}</p>
-              
+              <p className="text-sm text-muted-foreground truncate mb-2">{account.email}</p>
+
+              {/* Session Status */}
+              <div className="mb-4 flex items-center justify-between">
+                {account.sessionData ? (
+                  <span className="flex items-center gap-1 text-xs font-medium text-blue-500 bg-blue-500/10 px-2 py-1 rounded border border-blue-500/20">
+                    <Key className="w-3 h-3" /> Session Active
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1 text-xs font-medium text-amber-500 bg-amber-500/10 px-2 py-1 rounded border border-amber-500/20">
+                    <Key className="w-3 h-3" /> No Session
+                  </span>
+                )}
+                <button
+                  onClick={() => handleOpenSessionDialog(account)}
+                  className="flex items-center gap-1 px-3 py-1 text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 rounded border border-primary/20 transition-colors"
+                  title="Set up login session"
+                >
+                  <LogIn className="w-3 h-3" />
+                  {account.sessionData ? 'Re-login' : 'Login'}
+                </button>
+              </div>
+
               <div className="grid grid-cols-3 gap-2 mb-6">
                 <div className="text-center p-2 bg-secondary/30 rounded border border-border">
                   <div className="text-xs text-muted-foreground mb-1">Success</div>
