@@ -560,59 +560,12 @@ export class GeminiScraper {
 
       await this.page.waitForTimeout(2000); // Extra wait for UI to settle
 
-      // DEBUG: Take screenshot before looking for copy button
-      const timestamp3 = Date.now();
-      await this.page.screenshot({ path: `/tmp/gemini-before-copy-${timestamp3}.png`, fullPage: true });
-      await this.log(`📸 Full page screenshot: /tmp/gemini-before-copy-${timestamp3}.png`, 'info');
+      await this.log("✓ Response generation wait finished", 'success');
+      await this.log("🔍 Starting DOM evaluation for extraction...", 'info');
 
-      // DEBUG: Dump ALL buttons on the entire page to find copy button
-      const allPageButtons = await this.page.evaluate(() => {
-        const buttons = Array.from(document.querySelectorAll('button'));
-        return {
-          totalButtons: buttons.length,
-          buttons: buttons.map((btn, idx) => ({
-            index: idx,
-            text: btn.textContent?.trim().substring(0, 40),
-            ariaLabel: btn.getAttribute('aria-label'),
-            title: btn.getAttribute('title'),
-            className: btn.className.substring(0, 50)
-          })).filter(b => b.text || b.ariaLabel || b.title)
-        };
-      });
-      await this.log(`🔍 ALL PAGE BUTTONS (${allPageButtons.totalButtons} total):`, 'info');
-      await this.log(JSON.stringify(allPageButtons.buttons, null, 2), 'info');
-
-      // DEBUG: Try multiple selectors for response container
-      const responseContainerInfo = await this.page.evaluate(() => {
-        const selectors = [
-          'div[data-message-author-role="model"]',
-          '[data-message-author-role="model"]',
-          '.model-response',
-          '.response-container',
-          '[role="article"]',
-          'message-content',
-          '.message'
-        ];
-
-        for (const sel of selectors) {
-          const el = document.querySelector(sel);
-          if (el) {
-            const buttons = Array.from(el.querySelectorAll('button'));
-            return {
-              selector: sel,
-              found: true,
-              buttonCount: buttons.length,
-              buttons: buttons.map(btn => ({
-                text: btn.textContent?.trim().substring(0, 30),
-                ariaLabel: btn.getAttribute('aria-label'),
-                title: btn.getAttribute('title')
-              }))
-            };
-          }
-        }
-        return { found: false, selector: 'none' };
-      });
-      await this.log(`🔍 Response container: ${JSON.stringify(responseContainerInfo, null, 2)}`, 'info');
+      // SCREENSHOTS DISABLED - They freeze on massive DOM from large JSON responses
+      // const timestamp3 = Date.now();
+      // await this.page.screenshot({ path: `/tmp/gemini-before-copy-${timestamp3}.png`, fullPage: true });
 
       await this.log("📋 Extracting JSON using LAST-CHILD PRIORITY strategy", 'info');
 
@@ -625,6 +578,10 @@ export class GeminiScraper {
       // 6. If suspiciously short, find longest match
       let responseText = "";
       let copySuccess = false;
+
+      // Set extended timeout for large DOM parsing (60 seconds)
+      this.page.setDefaultTimeout(60000);
+      await this.log("⏱️ Set 60s timeout for DOM parsing", 'info');
 
       responseText = await this.page.evaluate(() => {
         console.log('=== STARTING LAST-CHILD PRIORITY EXTRACTION ===');
@@ -695,6 +652,8 @@ export class GeminiScraper {
         return jsonContent;
       });
 
+      await this.log("✓ DOM evaluation completed successfully", 'success');
+
       if (responseText && responseText.length > 10) {
         await this.log(`✓ Extracted JSON using delimiters (${responseText.length} characters)`, 'success');
         copySuccess = true;
@@ -726,14 +685,14 @@ export class GeminiScraper {
     } catch (error: any) {
       await this.log(`❌ Extraction error: ${error.message}`, 'error');
 
-      // Take a screenshot for debugging
-      if (this.page) {
-        try {
-          const timestamp = Date.now();
-          await this.page.screenshot({ path: `/tmp/gemini-error-${timestamp}.png` });
-          await this.log(`📸 Debug screenshot saved: /tmp/gemini-error-${timestamp}.png`, 'info');
-        } catch {}
-      }
+      // SCREENSHOTS DISABLED - Can freeze on large DOM
+      // if (this.page) {
+      //   try {
+      //     const timestamp = Date.now();
+      //     await this.page.screenshot({ path: `/tmp/gemini-error-${timestamp}.png` });
+      //     await this.log(`📸 Debug screenshot saved: /tmp/gemini-error-${timestamp}.png`, 'info');
+      //   } catch {}
+      // }
 
       throw error;
     }
