@@ -5,6 +5,7 @@ import { api } from "@shared/routes";
 import { z } from "zod";
 import session from "express-session";
 import MemoryStore from "memorystore";
+import { chromium } from "playwright";
 
 const SessionStore = MemoryStore(session);
 
@@ -192,6 +193,127 @@ export async function registerRoutes(
       });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Sync session locally - opens visible browser for manual login
+  app.post('/api/accounts/:id/sync', requireAuth, async (req, res) => {
+    try {
+      const accountId = Number(req.params.id);
+      const account = await storage.getAccountById(accountId);
+
+      if (!account) {
+        return res.status(404).json({ message: 'Account not found' });
+      }
+
+      console.log(`🚀 Starting Local Sync for ${account.email}...`);
+
+      await storage.createLog({
+        logLevel: 'info',
+        logMessage: `Starting manual login session for ${account.accountName}`,
+        accountId: accountId
+      });
+
+      // Launch visible browser window
+      const browser = await chromium.launch({
+        headless: false,
+        channel: 'chrome',
+        args: [
+          '--start-maximized',
+          '--disable-blink-features=AutomationControlled'
+        ],
+        ignoreDefaultArgs: ['--enable-automation']
+      });
+
+      const context = await browser.newContext({
+        viewport: null,
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+      });
+
+      const page = await context.newPage();
+
+      // Stealth mode - hide automation signals
+      await page.addInitScript(() => {
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => undefined,
+          configurable: true
+        });
+      });
+
+      console.log(`📍 Navigating to Gemini...`);
+      await page.goto('https://gemini.google.com/app', {
+        waitUntil: 'domcontentloaded',
+        timeout: 60000
+      });
+
+      console.log(`⏳ Waiting for manual login (5 minute timeout)...`);
+      console.log(`💡 Please log in manually in the browser window`);
+
+      // Wait for successful login - check for chat interface elements
+      const chatBoxSelectors = [
+        'textarea[placeholder*="Enter a prompt"]',
+        'textarea[aria-label*="prompt"]',
+        'div[contenteditable="true"]',
+        'textarea',
+        '.chat-input'
+      ];
+
+      const maxWaitTime = 300000; // 5 minutes
+      const startTime = Date.now();
+      let loggedIn = false;
+
+      while (!loggedIn && (Date.now() - startTime) < maxWaitTime) {
+        for (const selector of chatBoxSelectors) {
+          try {
+            const element = page.locator(selector).first();
+            if (await element.isVisible({ timeout: 1000 })) {
+              loggedIn = true;
+              console.log(`✅ Login detected with selector: ${selector}`);
+              break;
+            }
+          } catch {}
+        }
+
+        if (!loggedIn) {
+          await page.waitForTimeout(2000); // Check every 2 seconds
+        }
+      }
+
+      if (!loggedIn) {
+        await browser.close();
+        await storage.createLog({
+          logLevel: 'error',
+          logMessage: `Manual login timeout for ${account.accountName}`,
+          accountId: accountId
+        });
+        return res.status(408).json({ message: 'Login timeout - please try again' });
+      }
+
+      console.log(`📸 Capturing session state...`);
+      const state = await context.storageState();
+      const sessionJson = JSON.stringify(state);
+
+      console.log(`💾 Saving session to database...`);
+      await storage.saveAccountSession(accountId, sessionJson);
+
+      await storage.createLog({
+        logLevel: 'success',
+        logMessage: `Session synced successfully for ${account.accountName}`,
+        accountId: accountId
+      });
+
+      await browser.close();
+      console.log(`✅ Session sync complete for ${account.email}`);
+
+      res.json({ success: true, message: 'Session synced successfully' });
+
+    } catch (error: any) {
+      console.error(`❌ Sync failed:`, error);
+      await storage.createLog({
+        logLevel: 'error',
+        logMessage: `Session sync failed: ${error.message}`
+      });
+      res.status(500).json({ error: 'Sync failed or timed out', details: error.message });
     }
   });
 

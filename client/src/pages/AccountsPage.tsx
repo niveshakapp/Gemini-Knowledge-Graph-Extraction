@@ -71,6 +71,34 @@ export default function AccountsPage() {
     }
   });
 
+  const syncSessionMutation = useMutation({
+    mutationFn: async (accountId: number) => {
+      const res = await fetch(`/api/accounts/${accountId}/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.details || error.message || 'Sync failed');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.accounts.list.path] });
+      toast({
+        title: "Session Synced!",
+        description: "Login session captured and saved successfully. Account is ready for use."
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Sync Failed",
+        description: err.message || "Could not sync session. Try again or use manual paste.",
+        variant: "destructive"
+      });
+    }
+  });
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -121,6 +149,16 @@ export default function AccountsPage() {
       accountId: selectedAccountForSession.id,
       sessionData: sessionJsonInput
     });
+  };
+
+  const handleSyncSession = async (account: any) => {
+    if (confirm(`This will open a browser window for manual login.\n\nAccount: ${account.accountName} (${account.email})\n\nMake sure you're running this locally. Continue?`)) {
+      toast({
+        title: "Launching Browser...",
+        description: "Please log in manually in the popup window. You have 5 minutes."
+      });
+      syncSessionMutation.mutate(account.id);
+    }
   };
 
   return (
@@ -293,14 +331,24 @@ export default function AccountsPage() {
                     <Key className="w-3 h-3" /> No Session
                   </span>
                 )}
-                <button
-                  onClick={() => handleOpenSessionDialog(account)}
-                  className="flex items-center gap-1 px-3 py-1 text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 rounded border border-primary/20 transition-colors"
-                  title="Set up login session"
-                >
-                  <LogIn className="w-3 h-3" />
-                  {account.sessionData ? 'Re-login' : 'Login'}
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleSyncSession(account)}
+                    disabled={syncSessionMutation.isPending}
+                    className="flex items-center gap-1 px-3 py-1 text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 rounded border border-primary/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Open browser for manual login (Local only)"
+                  >
+                    <LogIn className="w-3 h-3" />
+                    {syncSessionMutation.isPending ? 'Syncing...' : (account.sessionData ? 'Re-login' : 'Login')}
+                  </button>
+                  <button
+                    onClick={() => handleOpenSessionDialog(account)}
+                    className="flex items-center gap-1 px-2 py-1 text-xs font-medium bg-secondary/50 text-muted-foreground hover:bg-secondary rounded border border-border transition-colors"
+                    title="Manual paste (for remote environments)"
+                  >
+                    <Key className="w-3 h-3" />
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-3 gap-2 mb-6">
