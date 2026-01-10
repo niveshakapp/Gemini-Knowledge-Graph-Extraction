@@ -48,9 +48,10 @@ export class GeminiScraper {
     try {
       await this.log("🚀 Initializing browser...", 'info');
 
-      // ANTI-DETECTION STEALTH SETTINGS
+      // ANTI-DETECTION STEALTH SETTINGS - ENHANCED FOR GOOGLE
       this.browser = await chromium.launch({
         headless: true,
+        // channel: 'chrome' can be used if Chrome is installed, but Chromium works fine with stealth
         ignoreDefaultArgs: ['--enable-automation'],  // Hide automation flags
         args: [
           '--no-sandbox',
@@ -64,7 +65,33 @@ export class GeminiScraper {
           '--disable-infobars',
           '--start-maximized',
           '--disable-features=IsolateOrigins,site-per-process',
-          '--disable-site-isolation-trials'
+          '--disable-site-isolation-trials',
+          '--disable-web-security',  // Disable CORS for testing
+          '--disable-features=VizDisplayCompositor',
+          '--disable-software-rasterizer',
+          '--disable-extensions',
+          '--disable-background-networking',
+          '--disable-sync',
+          '--metrics-recording-only',
+          '--disable-default-apps',
+          '--mute-audio',
+          '--no-default-browser-check',
+          '--autoplay-policy=user-gesture-required',
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-renderer-backgrounding',
+          '--disable-hang-monitor',
+          '--disable-ipc-flooding-protection',
+          '--disable-popup-blocking',
+          '--disable-prompt-on-repost',
+          '--disable-component-update',
+          '--disable-domain-reliability',
+          '--disable-features=TranslateUI',
+          '--disable-breakpad',
+          '--disable-client-side-phishing-detection',
+          '--disable-component-extensions-with-background-pages',
+          '--disable-features=CalculateNativeWinOcclusion',
+          '--enable-features=NetworkService,NetworkServiceInProcess'
         ]
       });
 
@@ -83,7 +110,7 @@ export class GeminiScraper {
         this.context = await this.browser.newContext({
           storageState: sessionPath,
           viewport: { width: 1920, height: 1080 },  // Realistic resolution
-          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
           locale: 'en-US',
           timezoneId: 'America/New_York'
         });
@@ -103,7 +130,7 @@ export class GeminiScraper {
 
         this.context = await this.browser.newContext({
           viewport: { width: 1920, height: 1080 },  // Realistic resolution
-          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
           locale: 'en-US',
           timezoneId: 'America/New_York'
         });
@@ -113,34 +140,137 @@ export class GeminiScraper {
 
       this.page = await this.context.newPage();
 
-      // STEALTH: Override navigator properties to hide automation
+      // STEALTH: Comprehensive navigator and API overrides to hide automation
       await this.page.addInitScript(() => {
-        // Override the navigator.webdriver property
+        // Override the navigator.webdriver property - CRITICAL
         Object.defineProperty(navigator, 'webdriver', {
-          get: () => undefined
+          get: () => undefined,
+          configurable: true
         });
 
-        // Override plugins to appear like a real browser
+        // Override navigator properties to match real Chrome browser
         Object.defineProperty(navigator, 'plugins', {
-          get: () => [1, 2, 3, 4, 5]
+          get: () => {
+            const pluginArray = [
+              { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+              { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+              { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+            ];
+            return Object.setPrototypeOf(pluginArray, PluginArray.prototype);
+          },
+          configurable: true
         });
 
-        // Override languages
         Object.defineProperty(navigator, 'languages', {
-          get: () => ['en-US', 'en']
+          get: () => ['en-US', 'en'],
+          configurable: true
         });
 
-        // Chrome runtime
+        Object.defineProperty(navigator, 'platform', {
+          get: () => 'Win32',
+          configurable: true
+        });
+
+        Object.defineProperty(navigator, 'vendor', {
+          get: () => 'Google Inc.',
+          configurable: true
+        });
+
+        Object.defineProperty(navigator, 'hardwareConcurrency', {
+          get: () => 8,
+          configurable: true
+        });
+
+        Object.defineProperty(navigator, 'deviceMemory', {
+          get: () => 8,
+          configurable: true
+        });
+
+        // Chrome runtime - comprehensive object
         (window as any).chrome = {
-          runtime: {}
+          runtime: {
+            PlatformOs: { MAC: 'mac', WIN: 'win', ANDROID: 'android', CROS: 'cros', LINUX: 'linux', OPENBSD: 'openbsd' },
+            PlatformArch: { ARM: 'arm', X86_32: 'x86-32', X86_64: 'x86-64' },
+            PlatformNaclArch: { ARM: 'arm', X86_32: 'x86-32', X86_64: 'x86-64' },
+            RequestUpdateCheckStatus: { THROTTLED: 'throttled', NO_UPDATE: 'no_update', UPDATE_AVAILABLE: 'update_available' },
+            OnInstalledReason: { INSTALL: 'install', UPDATE: 'update', CHROME_UPDATE: 'chrome_update', SHARED_MODULE_UPDATE: 'shared_module_update' },
+            OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' }
+          },
+          loadTimes: function() {},
+          csi: function() {},
+          app: {}
         };
 
-        // Permissions
+        // WebGL vendor and renderer spoofing
+        const getParameter = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function(parameter) {
+          if (parameter === 37445) {
+            return 'Intel Inc.';  // UNMASKED_VENDOR_WEBGL
+          }
+          if (parameter === 37446) {
+            return 'Intel Iris OpenGL Engine';  // UNMASKED_RENDERER_WEBGL
+          }
+          return getParameter.apply(this, arguments as any);
+        };
+
+        // Canvas fingerprinting protection
+        const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+        HTMLCanvasElement.prototype.toDataURL = function() {
+          const context = this.getContext('2d');
+          if (context) {
+            // Add minimal noise to canvas fingerprinting
+            const imageData = context.getImageData(0, 0, this.width, this.height);
+            for (let i = 0; i < imageData.data.length; i += 4) {
+              imageData.data[i] = imageData.data[i] + Math.floor(Math.random() * 2);
+            }
+            context.putImageData(imageData, 0, 0);
+          }
+          return originalToDataURL.apply(this, arguments as any);
+        };
+
+        // Permissions API
         const originalQuery = window.navigator.permissions.query;
         window.navigator.permissions.query = (parameters: any) =>
           parameters.name === 'notifications'
             ? Promise.resolve({ state: 'denied' } as PermissionStatus)
             : originalQuery(parameters);
+
+        // Battery API - remove it (automation detection vector)
+        delete (navigator as any).getBattery;
+
+        // Connection API spoofing
+        Object.defineProperty(navigator, 'connection', {
+          get: () => ({
+            effectiveType: '4g',
+            rtt: 100,
+            downlink: 10,
+            saveData: false
+          }),
+          configurable: true
+        });
+
+        // Remove automation-related properties
+        delete (window as any).__nightmare;
+        delete (window as any).__webdriver_evaluate;
+        delete (window as any).__selenium_evaluate;
+        delete (window as any).__webdriver_script_function;
+        delete (window as any).__webdriver_script_func;
+        delete (window as any).__webdriver_script_fn;
+        delete (window as any).__fxdriver_evaluate;
+        delete (window as any).__driver_unwrapped;
+        delete (window as any).__webdriver_unwrapped;
+        delete (window as any).__driver_evaluate;
+        delete (window as any).__selenium_unwrapped;
+        delete (window as any).__fxdriver_unwrapped;
+
+        // Override toString to hide proxy detection
+        const originalToString = Function.prototype.toString;
+        Function.prototype.toString = function() {
+          if (this === navigator.permissions.query) {
+            return 'function query() { [native code] }';
+          }
+          return originalToString.apply(this, arguments as any);
+        };
       });
 
       await this.log("✓ Browser context created with stealth settings", 'success');
@@ -280,8 +410,18 @@ export class GeminiScraper {
           const emailInput = this.page.locator(selector).first();
           await emailInput.waitFor({ timeout: 10000, state: 'visible' });
           await this.log(`✓ Found email input with selector: ${selector}`, 'success');
+
+          // HUMAN-LIKE BEHAVIOR: Add random delay before typing (simulate thinking)
+          await this.page.waitForTimeout(500 + Math.random() * 1000);
+
+          // HUMAN-LIKE BEHAVIOR: Click the input field first (like a human would)
+          await emailInput.click();
+          await this.page.waitForTimeout(200 + Math.random() * 300);
+
+          // HUMAN-LIKE BEHAVIOR: Type with realistic delay between characters (50-150ms per character)
           await emailInput.clear();
-          await emailInput.fill(email);
+          await emailInput.type(email, { delay: 50 + Math.random() * 100 });
+
           await this.log(`✓ Email entered successfully`, 'success');
           emailEntered = true;
           break;
@@ -304,8 +444,8 @@ export class GeminiScraper {
         throw new Error("Could not find email input field. Check logs for page content.");
       }
 
-      // Click Next or press Enter
-      await this.page.waitForTimeout(1000);
+      // HUMAN-LIKE BEHAVIOR: Wait a bit before clicking Next (simulate reading)
+      await this.page.waitForTimeout(800 + Math.random() * 1200);
 
       const nextButtonSelectors = [
         'button:has-text("Next")',
@@ -318,6 +458,8 @@ export class GeminiScraper {
         try {
           const nextButton = this.page.locator(selector).first();
           if (await nextButton.isVisible({ timeout: 2000 })) {
+            // HUMAN-LIKE BEHAVIOR: Small delay before clicking
+            await this.page.waitForTimeout(300 + Math.random() * 400);
             await nextButton.click();
             await this.log(`✓ Clicked Next button with selector: ${selector}`, 'success');
             nextClicked = true;
@@ -374,8 +516,18 @@ export class GeminiScraper {
           const passwordInput = this.page.locator(selector).first();
           await passwordInput.waitFor({ timeout: 10000, state: 'visible' });
           await this.log(`✓ Found password field with selector: ${selector}`, 'success');
+
+          // HUMAN-LIKE BEHAVIOR: Add random delay before typing password
+          await this.page.waitForTimeout(400 + Math.random() * 800);
+
+          // HUMAN-LIKE BEHAVIOR: Click the input field first
+          await passwordInput.click();
+          await this.page.waitForTimeout(200 + Math.random() * 300);
+
+          // HUMAN-LIKE BEHAVIOR: Type password with realistic delay
           await passwordInput.clear();
-          await passwordInput.fill(password);
+          await passwordInput.type(password, { delay: 50 + Math.random() * 100 });
+
           await this.log(`✓ Password entered`, 'success');
           passwordEntered = true;
           break;
@@ -409,14 +561,16 @@ export class GeminiScraper {
         throw new Error("Could not find password input field. Page may require verification or have unexpected layout.");
       }
 
-      // Click Next or press Enter
-      await this.page.waitForTimeout(1000);
+      // HUMAN-LIKE BEHAVIOR: Wait before clicking Next button after password
+      await this.page.waitForTimeout(600 + Math.random() * 1000);
 
       nextClicked = false;
       for (const selector of nextButtonSelectors) {
         try {
           const nextButton = this.page.locator(selector).first();
           if (await nextButton.isVisible({ timeout: 2000 })) {
+            // HUMAN-LIKE BEHAVIOR: Small delay before clicking
+            await this.page.waitForTimeout(200 + Math.random() * 400);
             await nextButton.click();
             await this.log(`✓ Clicked Next button after password`, 'success');
             nextClicked = true;
