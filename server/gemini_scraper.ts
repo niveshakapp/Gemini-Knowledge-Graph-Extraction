@@ -577,6 +577,18 @@ export class GeminiScraper {
       await this.log("✓ Response generation wait finished", 'success');
       await this.log("🔍 Starting DOM evaluation for extraction...", 'info');
 
+      // CRITICAL: Explicitly wait for delimiter text to appear in page body
+      await this.log("⏳ Waiting for <<<JSON_START>>> delimiter to appear in page...", 'info');
+      try {
+        await this.page.waitForFunction(
+          () => document.body.innerText.includes('<<<JSON_START>>>'),
+          { timeout: 30000 }
+        );
+        await this.log("✓ Start delimiter detected in page body", 'success');
+      } catch (delimiterWaitError) {
+        await this.log("⚠️ Start delimiter not detected in body after 30s - proceeding anyway (may be hidden)", 'warning');
+      }
+
       // SCREENSHOTS DISABLED - They freeze on massive DOM from large JSON responses
       // const timestamp3 = Date.now();
       // await this.page.screenshot({ path: `/tmp/gemini-before-copy-${timestamp3}.png`, fullPage: true });
@@ -621,6 +633,9 @@ export class GeminiScraper {
 
         if (bubblesWithDelimiter.length === 0) {
           console.error('CRITICAL: No containers found with <<<JSON_START>>> delimiter');
+          console.error('=== FORENSIC DEBUG: First 500 chars of document.body.innerText ===');
+          console.error(document.body.innerText.substring(0, 500));
+          console.error('=== END FORENSIC DEBUG ===');
           return '';
         }
 
@@ -632,18 +647,35 @@ export class GeminiScraper {
         const fullText = lastBubble.innerText || lastBubble.textContent || '';
         console.log(`Step 4: Extracted innerText: ${fullText.length} characters`);
 
-        // Step 5: Run regex to find content between delimiters
-        const regex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/g;
+        // Step 5: Run STRICT regex to find content between delimiters
+        console.log('Step 5: Attempting STRICT regex (with both start and end tags)...');
+        const strictRegex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/g;
         const matches: string[] = [];
         let match;
 
-        while ((match = regex.exec(fullText)) !== null) {
+        while ((match = strictRegex.exec(fullText)) !== null) {
           matches.push(match[1].trim());
-          console.log(`Found match: ${match[1].trim().length} characters`);
+          console.log(`Found strict match: ${match[1].trim().length} characters`);
         }
 
+        // Step 5b: FALLBACK regex if strict fails (handles truncation)
         if (matches.length === 0) {
-          console.error('CRITICAL: Regex found no matches between delimiters');
+          console.warn('STRICT regex failed - attempting FALLBACK regex (start tag to end of string)...');
+          const fallbackRegex = /<<<JSON_START>>>([\s\S]*)$/;
+          const fallbackMatch = fullText.match(fallbackRegex);
+
+          if (fallbackMatch && fallbackMatch[1]) {
+            matches.push(fallbackMatch[1].trim());
+            console.log(`Found FALLBACK match: ${fallbackMatch[1].trim().length} characters (end tag may be truncated)`);
+          }
+        }
+
+        // Step 5c: FORENSIC DEBUGGING if all regex attempts fail
+        if (matches.length === 0) {
+          console.error('CRITICAL: Both strict and fallback regex failed');
+          console.error('=== FORENSIC DEBUG: First 500 chars of lastBubble.innerText ===');
+          console.error(fullText.substring(0, 500));
+          console.error('=== END FORENSIC DEBUG ===');
           return '';
         }
 
@@ -671,12 +703,15 @@ export class GeminiScraper {
       if (responseText && responseText.length > 10) {
         await this.log(`✓ Extracted JSON using delimiters (${responseText.length} characters)`, 'success');
         copySuccess = true;
+      } else {
+        await this.log(`⚠️ Extraction returned empty or very short response (${responseText.length} chars)`, 'warning');
       }
 
-      // If delimiter extraction fails, throw specific error
+      // If delimiter extraction fails, throw specific error with forensic info
       if (!copySuccess || !responseText) {
         await this.log("❌ CRITICAL: JSON delimiters not found in response", 'error');
-        throw new Error("Scraper Error: JSON delimiters not found in response.");
+        await this.log("💡 Check browser console logs above for FORENSIC DEBUG output showing what text was found", 'error');
+        throw new Error("Scraper Error: JSON delimiters not found in response. Check logs for forensic debug info.");
       }
 
       await this.log(`✅ Raw JSON extracted (${responseText.length} characters)`, 'success');
