@@ -93,8 +93,8 @@ class QueueProcessor {
         accountId: account.id
       });
 
-      // Initialize scraper with email to enable session persistence
-      await scraper.init(account.email);
+      // Initialize scraper with email and session data from database
+      await scraper.init(account.email, account.sessionData);
 
       // Login with account credentials (will reuse session if available)
       await scraper.login(account.email, account.passwordEncrypted);
