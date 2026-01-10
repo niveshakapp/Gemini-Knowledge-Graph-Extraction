@@ -249,47 +249,82 @@ export class GeminiScraper {
         await this.page.keyboard.press('Enter');
       }
 
-      await this.log("⏳ Waiting 5s for password page...", 'info');
-      await this.page.waitForTimeout(5000);
-      await this.log("✓ Password page loaded", 'success');
+      await this.log("⏳ Waiting 8s for next page to load...", 'info');
+      await this.page.waitForTimeout(8000);
+      await this.log("✓ Next page loaded", 'success');
 
       // SCREENSHOTS DISABLED for faster processing
       // const screenshot2Path = `/tmp/gemini-step2-${Date.now()}.png`;
       // await this.page.screenshot({ path: screenshot2Path, fullPage: true });
 
+      // FORENSIC: Check what inputs are actually present on the page
+      await this.log("🔍 Analyzing page inputs...", 'info');
+      const pageInputs = await this.page.evaluate(() => {
+        const inputs = Array.from(document.querySelectorAll('input'));
+        return inputs.map(inp => ({
+          type: inp.type,
+          name: inp.name,
+          id: inp.id,
+          placeholder: inp.placeholder,
+          autocomplete: inp.autocomplete,
+          visible: inp.offsetParent !== null
+        })).filter(i => i.visible);
+      });
+      await this.log(`📋 Found ${pageInputs.length} visible inputs: ${JSON.stringify(pageInputs, null, 2)}`, 'info');
+
       // Enter password
-      await this.log("🔒 Entering password", 'info');
+      await this.log("🔒 Looking for password input field", 'info');
 
       const passwordSelectors = [
         'input[type="password"]',
         'input[name="password"]',
+        'input[name="Passwd"]',  // Google sometimes uses this
         'input[autocomplete="current-password"]',
-        '#password input'
+        '#password input',
+        '#password',
+        'input[aria-label*="password" i]',
+        'input[aria-label*="Enter your password" i]'
       ];
 
       let passwordEntered = false;
       for (const selector of passwordSelectors) {
         try {
           const passwordInput = this.page.locator(selector).first();
-          await passwordInput.waitFor({ timeout: 20000, state: 'visible' });
+          await passwordInput.waitFor({ timeout: 10000, state: 'visible' });
+          await this.log(`✓ Found password field with selector: ${selector}`, 'success');
           await passwordInput.clear();
           await passwordInput.fill(password);
-          await this.log(`✓ Password entered using selector: ${selector}`, 'success');
+          await this.log(`✓ Password entered`, 'success');
           passwordEntered = true;
           break;
         } catch (e: any) {
-          await this.log(`⚠️ Selector ${selector} failed: ${e.message}`, 'warning');
+          // Don't log every failure - just continue to next selector
+          continue;
         }
       }
 
       if (!passwordEntered) {
+        // Check if we're on a verification/security page instead
+        const pageText = await this.page.evaluate(() => document.body.innerText);
+        const isVerificationPage = pageText.toLowerCase().includes('verify') ||
+                                   pageText.toLowerCase().includes('confirm') ||
+                                   pageText.toLowerCase().includes('security') ||
+                                   pageText.toLowerCase().includes('try another way');
+
+        if (isVerificationPage) {
+          await this.log("⚠️ Detected verification/security page - Google requires additional verification", 'warning');
+          await this.log(`📄 Page text preview: ${pageText.substring(0, 300)}`, 'info');
+          throw new Error("Google requires additional verification (phone, recovery email, etc.). Please complete verification manually or use an account without 2FA.");
+        }
+
         // Dump page HTML for debugging
         const html = await this.page.content();
         const htmlPath = `/tmp/gemini-page-${Date.now()}.html`;
         fs.writeFileSync(htmlPath, html);
         await this.log(`📄 Page HTML saved: ${htmlPath}`, 'info');
+        await this.log(`📄 Page text preview: ${pageText.substring(0, 500)}`, 'error');
 
-        throw new Error("Could not find password input field after multiple attempts");
+        throw new Error("Could not find password input field. Page may require verification or have unexpected layout.");
       }
 
       // Click Next or press Enter
