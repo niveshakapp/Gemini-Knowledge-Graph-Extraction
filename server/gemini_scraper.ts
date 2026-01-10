@@ -814,8 +814,8 @@ export class GeminiScraper {
       // CRITICAL: Start a NEW CHAT to avoid old context/hallucination
       await this.log("🆕 Forcing fresh chat to avoid context pollution", 'info');
       await this.page.goto('https://gemini.google.com/app?hl=en', {
-        waitUntil: 'networkidle',
-        timeout: 30000
+        waitUntil: 'domcontentloaded',  // Use domcontentloaded instead of networkidle (faster, more reliable)
+        timeout: 60000  // Increase timeout to 60s
       });
 
       await this.log("⏳ Waiting for chat interface to be ready", 'info');
