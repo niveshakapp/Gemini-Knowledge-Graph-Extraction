@@ -97,45 +97,63 @@ export class GeminiScraper {
 
       await this.log("✓ Browser launched successfully", 'success');
 
-      // Try to load existing session if email is provided
-      await this.log("🔍 Checking for existing session...", 'info');
-      const hasSession = email ? await this.sessionExists(email) : false;
+      // PRIORITY 1: Check for global manual login session (gemini_session.json)
+      const globalSessionPath = path.join(process.cwd(), 'gemini_session.json');
+      const hasGlobalSession = fs.existsSync(globalSessionPath);
 
-      if (hasSession && email) {
-        this.sessionDir = this.getSessionDir(email);
-        const sessionPath = path.join(this.sessionDir, 'state.json');
-
-        await this.log(`🔄 Loading existing session from ${this.sessionDir}`, 'info');
+      if (hasGlobalSession) {
+        await this.log("🔄 Loading session from gemini_session.json (manual login)", 'info');
 
         this.context = await this.browser.newContext({
-          storageState: sessionPath,
-          viewport: { width: 1920, height: 1080 },  // Realistic resolution
+          storageState: globalSessionPath,
+          viewport: { width: 1920, height: 1080 },
           userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
           locale: 'en-US',
           timezoneId: 'America/New_York'
         });
 
-        await this.log('✓ Session loaded successfully (will skip login)', 'success');
+        await this.log('✅ Global session loaded successfully (will skip login)', 'success');
       } else {
-        await this.log("ℹ️ No existing session found, will create new one", 'info');
+        // PRIORITY 2: Try to load existing session if email is provided
+        await this.log("🔍 Checking for existing session...", 'info');
+        const hasSession = email ? await this.sessionExists(email) : false;
 
-        if (email) {
+        if (hasSession && email) {
           this.sessionDir = this.getSessionDir(email);
-          // Create session directory if it doesn't exist
-          if (!fs.existsSync(this.sessionDir)) {
-            await this.log(`📁 Creating session directory: ${this.sessionDir}`, 'info');
-            fs.mkdirSync(this.sessionDir, { recursive: true });
+          const sessionPath = path.join(this.sessionDir, 'state.json');
+
+          await this.log(`🔄 Loading existing session from ${this.sessionDir}`, 'info');
+
+          this.context = await this.browser.newContext({
+            storageState: sessionPath,
+            viewport: { width: 1920, height: 1080 },  // Realistic resolution
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            locale: 'en-US',
+            timezoneId: 'America/New_York'
+          });
+
+          await this.log('✓ Session loaded successfully (will skip login)', 'success');
+        } else {
+          await this.log("ℹ️ No existing session found, will create new one", 'info');
+
+          if (email) {
+            this.sessionDir = this.getSessionDir(email);
+            // Create session directory if it doesn't exist
+            if (!fs.existsSync(this.sessionDir)) {
+              await this.log(`📁 Creating session directory: ${this.sessionDir}`, 'info');
+              fs.mkdirSync(this.sessionDir, { recursive: true });
+            }
           }
+
+          this.context = await this.browser.newContext({
+            viewport: { width: 1920, height: 1080 },  // Realistic resolution
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            locale: 'en-US',
+            timezoneId: 'America/New_York'
+          });
+
+          await this.log('✓ New browser context created', 'success');
         }
-
-        this.context = await this.browser.newContext({
-          viewport: { width: 1920, height: 1080 },  // Realistic resolution
-          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-          locale: 'en-US',
-          timezoneId: 'America/New_York'
-        });
-
-        await this.log('✓ New browser context created', 'success');
       }
 
       this.page = await this.context.newPage();

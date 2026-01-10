@@ -4,3 +4,6 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+
+# Sensitive session data - DO NOT COMMIT
+gemini_session.json
