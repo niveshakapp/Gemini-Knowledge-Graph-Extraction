@@ -1071,8 +1071,37 @@ export class GeminiScraper {
 
         if (bubblesWithDelimiter.length === 0) {
           console.error('CRITICAL: No containers found with <<<JSON_START>>> delimiter');
-          console.error('=== FORENSIC DEBUG: First 500 chars of document.body.innerText ===');
-          console.error(document.body.innerText.substring(0, 500));
+          console.error('=== ATTEMPTING GLOBAL BODY FALLBACK (REGEX ON FULL PAGE) ===');
+
+          // FALLBACK: Extract directly from entire page text using regex
+          const fullPageText = document.body.innerText;
+          console.log(`Attempting regex on full page text (${fullPageText.length} chars)`);
+
+          // Try STRICT regex first (both start and end delimiters)
+          const strictRegex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/;
+          const strictMatch = fullPageText.match(strictRegex);
+
+          if (strictMatch && strictMatch[1]) {
+            const extracted = strictMatch[1].trim();
+            console.log(`✅ STRICT regex match on full page: ${extracted.length} chars`);
+            return extracted;
+          }
+
+          // Try FALLBACK regex (start delimiter to end of text)
+          console.warn('STRICT regex failed on full page, trying FALLBACK regex...');
+          const fallbackRegex = /<<<JSON_START>>>([\s\S]*)$/;
+          const fallbackMatch = fullPageText.match(fallbackRegex);
+
+          if (fallbackMatch && fallbackMatch[1]) {
+            const extracted = fallbackMatch[1].trim();
+            console.log(`⚠️ FALLBACK regex match on full page: ${extracted.length} chars (end delimiter may be missing)`);
+            return extracted;
+          }
+
+          // If even regex on full page fails, log forensics
+          console.error('❌ Both STRICT and FALLBACK regex failed on full page text');
+          console.error('=== FORENSIC DEBUG: First 1000 chars of document.body.innerText ===');
+          console.error(fullPageText.substring(0, 1000));
           console.error('=== END FORENSIC DEBUG ===');
           return '';
         }
