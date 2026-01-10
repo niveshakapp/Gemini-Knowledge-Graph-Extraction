@@ -236,31 +236,72 @@ export class GeminiScraper {
         await this.log("⚠️ No sign in button found - might already be on login page", 'warning');
       }
 
+      // Wait a bit for page to navigate/load
+      await this.log("⏳ Waiting for login page to load...", 'info');
+      await this.page.waitForTimeout(3000);
+
+      // FORENSIC: Check current URL and page state
+      const currentUrl = this.page.url();
+      await this.log(`📍 Current URL: ${currentUrl}`, 'info');
+
+      // FORENSIC: Check what inputs are on the page
+      const pageInputs = await this.page.evaluate(() => {
+        const inputs = Array.from(document.querySelectorAll('input'));
+        return inputs.map(inp => ({
+          type: inp.type,
+          name: inp.name,
+          id: inp.id,
+          placeholder: inp.placeholder,
+          autocomplete: inp.autocomplete,
+          visible: inp.offsetParent !== null
+        })).filter(i => i.visible);
+      });
+      await this.log(`🔍 Found ${pageInputs.length} visible inputs on page: ${JSON.stringify(pageInputs, null, 2)}`, 'info');
+
       // Enter email
-      await this.log("📧 Entering email address", 'info');
+      await this.log("📧 Looking for email input field...", 'info');
 
       const emailSelectors = [
         'input[type="email"]',
         'input[name="identifier"]',
+        'input[name="email"]',
         'input[autocomplete="username"]',
-        '#identifierId'
+        'input[autocomplete="email"]',
+        '#identifierId',
+        '#Email',
+        'input[aria-label*="email" i]',
+        'input[placeholder*="email" i]'
       ];
 
       let emailEntered = false;
       for (const selector of emailSelectors) {
         try {
+          await this.log(`🔍 Trying selector: ${selector}`, 'info');
           const emailInput = this.page.locator(selector).first();
-          await emailInput.waitFor({ timeout: 15000, state: 'visible' });
+          await emailInput.waitFor({ timeout: 10000, state: 'visible' });
+          await this.log(`✓ Found email input with selector: ${selector}`, 'success');
           await emailInput.clear();
           await emailInput.fill(email);
-          await this.log(`✓ Email entered using selector: ${selector}`, 'success');
+          await this.log(`✓ Email entered successfully`, 'success');
           emailEntered = true;
           break;
-        } catch {}
+        } catch (e: any) {
+          await this.log(`⚠️ Selector ${selector} failed: ${e.message}`, 'warning');
+          continue;
+        }
       }
 
       if (!emailEntered) {
-        throw new Error("Could not find email input field");
+        // FORENSIC: Dump page text and HTML
+        const pageText = await this.page.evaluate(() => document.body.innerText);
+        await this.log(`📄 Page text preview (first 1000 chars): ${pageText.substring(0, 1000)}`, 'error');
+
+        const html = await this.page.content();
+        const htmlPath = `/tmp/gemini-login-fail-${Date.now()}.html`;
+        fs.writeFileSync(htmlPath, html);
+        await this.log(`📄 Page HTML saved: ${htmlPath}`, 'info');
+
+        throw new Error("Could not find email input field. Check logs for page content.");
       }
 
       // Click Next or press Enter
