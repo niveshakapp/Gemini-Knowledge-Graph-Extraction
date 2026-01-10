@@ -478,6 +478,75 @@ export class GeminiScraper {
       });
       await this.log(`🔍 Found ${pageInputs.length} visible inputs on page: ${JSON.stringify(pageInputs, null, 2)}`, 'info');
 
+      // HANDLE ACCOUNT CHOOSER SCREEN
+      // Check if we're on the Account Chooser screen instead of the email input screen
+      const isAccountChooser = currentUrl.includes('accountchooser') ||
+                               await this.page.locator('text=/Choose an account/i').isVisible({ timeout: 2000 }).catch(() => false);
+
+      if (isAccountChooser) {
+        await this.log("🔍 Detected Account Chooser screen", 'info');
+
+        // Try to click the email if it's already shown
+        const accountSelectors = [
+          `div[data-email="${email}"]`,
+          `text="${email}"`,
+          `text=${email}`,
+          `[data-identifier="${email}"]`,
+          `div:has-text("${email}")`,
+          `li:has-text("${email}")`
+        ];
+
+        let accountClicked = false;
+        for (const selector of accountSelectors) {
+          try {
+            await this.log(`🔍 Looking for account with selector: ${selector}`, 'info');
+            const accountElement = this.page.locator(selector).first();
+            if (await accountElement.isVisible({ timeout: 3000 })) {
+              await this.log(`✓ Found account on chooser screen: ${email}`, 'success');
+              await accountElement.click();
+              await this.log("✓ Clicked account - waiting for password screen...", 'success');
+              await this.page.waitForTimeout(3000);
+              accountClicked = true;
+
+              // Skip to password entry section - set flag
+              break;
+            }
+          } catch {}
+        }
+
+        // If account not found, click "Use another account"
+        if (!accountClicked) {
+          await this.log("⚠️ Email not found on chooser - looking for 'Use another account' button", 'warning');
+
+          const useAnotherAccountSelectors = [
+            'text=/Use another account/i',
+            'div:has-text("Use another account")',
+            'div[data-identifier="addAccount"]',
+            '[role="link"]:has-text("Use another account")',
+            'button:has-text("Use another account")'
+          ];
+
+          let clickedUseAnother = false;
+          for (const selector of useAnotherAccountSelectors) {
+            try {
+              const element = this.page.locator(selector).first();
+              if (await element.isVisible({ timeout: 3000 })) {
+                await this.log(`✓ Found 'Use another account' with selector: ${selector}`, 'success');
+                await element.click();
+                await this.log("✓ Clicked 'Use another account' - waiting for email input...", 'success');
+                await this.page.waitForTimeout(3000);
+                clickedUseAnother = true;
+                break;
+              }
+            } catch {}
+          }
+
+          if (!clickedUseAnother) {
+            await this.log("⚠️ Could not find 'Use another account' button", 'warning');
+          }
+        }
+      }
+
       // Enter email
       await this.log("📧 Looking for email input field...", 'info');
 
