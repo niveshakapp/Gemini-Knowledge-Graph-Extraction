@@ -48,8 +48,10 @@ export class GeminiScraper {
     try {
       await this.log("🚀 Initializing browser...", 'info');
 
+      // ANTI-DETECTION STEALTH SETTINGS
       this.browser = await chromium.launch({
         headless: true,
+        ignoreDefaultArgs: ['--enable-automation'],  // Hide automation flags
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
@@ -58,7 +60,11 @@ export class GeminiScraper {
           '--no-first-run',
           '--no-zygote',
           '--disable-gpu',
-          '--disable-blink-features=AutomationControlled'
+          '--disable-blink-features=AutomationControlled',  // CRITICAL: Hides navigator.webdriver
+          '--disable-infobars',
+          '--start-maximized',
+          '--disable-features=IsolateOrigins,site-per-process',
+          '--disable-site-isolation-trials'
         ]
       });
 
@@ -76,8 +82,10 @@ export class GeminiScraper {
 
         this.context = await this.browser.newContext({
           storageState: sessionPath,
-          viewport: { width: 1280, height: 720 },
-          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          viewport: { width: 1920, height: 1080 },  // Realistic resolution
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          locale: 'en-US',
+          timezoneId: 'America/New_York'
         });
 
         await this.log('✓ Session loaded successfully (will skip login)', 'success');
@@ -94,15 +102,48 @@ export class GeminiScraper {
         }
 
         this.context = await this.browser.newContext({
-          viewport: { width: 1280, height: 720 },
-          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          viewport: { width: 1920, height: 1080 },  // Realistic resolution
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          locale: 'en-US',
+          timezoneId: 'America/New_York'
         });
 
         await this.log('✓ New browser context created', 'success');
       }
 
       this.page = await this.context.newPage();
-      await this.log("✓ Browser context created", 'success');
+
+      // STEALTH: Override navigator properties to hide automation
+      await this.page.addInitScript(() => {
+        // Override the navigator.webdriver property
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => undefined
+        });
+
+        // Override plugins to appear like a real browser
+        Object.defineProperty(navigator, 'plugins', {
+          get: () => [1, 2, 3, 4, 5]
+        });
+
+        // Override languages
+        Object.defineProperty(navigator, 'languages', {
+          get: () => ['en-US', 'en']
+        });
+
+        // Chrome runtime
+        (window as any).chrome = {
+          runtime: {}
+        };
+
+        // Permissions
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters: any) =>
+          parameters.name === 'notifications'
+            ? Promise.resolve({ state: 'denied' } as PermissionStatus)
+            : originalQuery(parameters);
+      });
+
+      await this.log("✓ Browser context created with stealth settings", 'success');
 
     } catch (error: any) {
       await this.log(`❌ Browser initialization failed: ${error.message}`, 'error');
