@@ -1148,8 +1148,52 @@ export class GeminiScraper {
       // If delimiter extraction fails, throw specific error with forensic info
       if (!copySuccess || !responseText) {
         await this.log("❌ CRITICAL: JSON delimiters not found in response", 'error');
-        await this.log("💡 Check browser console logs above for FORENSIC DEBUG output showing what text was found", 'error');
-        throw new Error("Scraper Error: JSON delimiters not found in response. Check logs for forensic debug info.");
+        await this.log("💡 Attempting to capture full raw response for debugging...", 'info');
+
+        // FALLBACK: Capture entire response text for debugging
+        const rawResponse = await this.page.evaluate(() => {
+          // Try to get the last model response by various selectors
+          const selectors = [
+            '.model-response-text',
+            '[data-message-author-role="model"]',
+            '.message-content',
+            'message-content',
+            '.response-container',
+            '.conversation-turn'
+          ];
+
+          for (const selector of selectors) {
+            const elements = Array.from(document.querySelectorAll(selector));
+            if (elements.length > 0) {
+              // Get the last element (most recent response)
+              const lastElement = elements[elements.length - 1] as HTMLElement;
+              const text = lastElement.innerText || lastElement.textContent || '';
+              if (text.length > 100) {
+                return {
+                  text: text,
+                  selector: selector,
+                  length: text.length
+                };
+              }
+            }
+          }
+
+          // Ultimate fallback: get entire page text
+          return {
+            text: document.body.innerText,
+            selector: 'document.body',
+            length: document.body.innerText.length
+          };
+        });
+
+        await this.log(`📄 Captured raw response: ${rawResponse.length} chars using selector: ${rawResponse.selector}`, 'info');
+        await this.log(`📄 Raw response preview: ${rawResponse.text.substring(0, 500)}...`, 'info');
+
+        // Create error object with raw response attached
+        const error: any = new Error("Scraper Error: JSON delimiters not found in response. Check logs for forensic debug info.");
+        error.rawResponse = rawResponse.text;
+        error.rawResponseLength = rawResponse.length;
+        throw error;
       }
 
       await this.log(`✅ Raw JSON extracted (${responseText.length} characters)`, 'success');
