@@ -529,6 +529,28 @@ export class GeminiScraper {
       await this.page.waitForTimeout(1000);
       await this.log("✓ Prompt injected successfully", 'success');
 
+      // CRITICAL: Count existing response containers BEFORE sending prompt
+      // This ensures we extract from the NEW response, not old chat history
+      const existingResponseCount = await this.page.evaluate(() => {
+        const containerSelectors = [
+          'message-content',  // Latest Gemini UI
+          'model-response',
+          '.model-response-text',
+          '[data-message-author-role="model"]',
+          '.response-container'
+        ];
+
+        for (const selector of containerSelectors) {
+          const elements = document.querySelectorAll(selector);
+          if (elements.length > 0) {
+            console.log(`Counted ${elements.length} existing responses using selector: ${selector}`);
+            return { count: elements.length, selector };
+          }
+        }
+        return { count: 0, selector: 'none' };
+      });
+      await this.log(`📊 Existing responses before prompt: ${existingResponseCount.count} (using selector: ${existingResponseCount.selector})`, 'info');
+
       await this.log("📤 Sending prompt to Gemini", 'info');
       await this.page.keyboard.press('Enter');
 
@@ -609,12 +631,12 @@ export class GeminiScraper {
       await this.log("📋 Extracting JSON using delimiter strategy", 'info');
 
       // NEW STRATEGY: Use delimiters <<<JSON_START>>> and <<<JSON_END>>>
-      // This is more reliable than searching for specific code block classes
+      // CRITICAL: Extract from the NEW response that appeared AFTER our prompt, not old chat history
       let responseText = "";
       let copySuccess = false;
 
-      // Extract using JavaScript evaluation - get entire last response container
-      responseText = await this.page.evaluate(() => {
+      // Extract using JavaScript evaluation - get the NEW response container
+      responseText = await this.page.evaluate((countInfo) => {
         // Selectors for the entire model response container (message bubble)
         const containerSelectors = [
           'message-content',  // Latest Gemini UI
@@ -624,19 +646,43 @@ export class GeminiScraper {
           '.response-container'
         ];
 
-        // Find the last response container
+        // Find ALL response containers and get the NEW one (after the existing count)
         let responseContainer: HTMLElement | null = null;
         for (const selector of containerSelectors) {
           const elements = Array.from(document.querySelectorAll(selector));
-          if (elements.length > 0) {
+          const totalNow = elements.length;
+          const existingCount = countInfo.count;
+
+          console.log(`Selector: ${selector}, Total now: ${totalNow}, Existing before: ${existingCount}`);
+
+          if (totalNow > existingCount) {
+            // Get the FIRST NEW response (at index = existingCount)
+            responseContainer = elements[existingCount] as HTMLElement;
+            console.log(`SUCCESS: Found NEW response container at index ${existingCount} using: ${selector}`);
+            break;
+          } else if (totalNow === existingCount + 1) {
+            // Exactly one new response - take the last one
             responseContainer = elements[elements.length - 1] as HTMLElement;
-            console.log(`Found response container using: ${selector}`);
+            console.log(`Found NEW response (last of ${totalNow}) using: ${selector}`);
             break;
           }
         }
 
         if (!responseContainer) {
-          console.error('No response container found');
+          console.error('No NEW response container found - falling back to last element');
+          // Fallback: try to get the last element anyway
+          for (const selector of containerSelectors) {
+            const elements = Array.from(document.querySelectorAll(selector));
+            if (elements.length > 0) {
+              responseContainer = elements[elements.length - 1] as HTMLElement;
+              console.log(`FALLBACK: Using last response from: ${selector}`);
+              break;
+            }
+          }
+        }
+
+        if (!responseContainer) {
+          console.error('No response container found at all');
           return '';
         }
 
@@ -656,7 +702,7 @@ export class GeminiScraper {
 
         console.error('Delimiters not found in response');
         return '';
-      });
+      }, existingResponseCount);
 
       if (responseText && responseText.length > 10) {
         await this.log(`✓ Extracted JSON using delimiters (${responseText.length} characters)`, 'success');
