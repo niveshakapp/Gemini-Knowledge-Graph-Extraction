@@ -478,6 +478,9 @@ export class GeminiScraper {
       });
       await this.log(`🔍 Found ${pageInputs.length} visible inputs on page: ${JSON.stringify(pageInputs, null, 2)}`, 'info');
 
+      // Track if email entry step is already completed (e.g., via Account Chooser click)
+      let emailStepCompleted = false;
+
       // HANDLE ACCOUNT CHOOSER SCREEN
       // Check if we're on the Account Chooser screen instead of the email input screen
       const isAccountChooser = currentUrl.includes('accountchooser') ||
@@ -507,8 +510,7 @@ export class GeminiScraper {
               await this.log("✓ Clicked account - waiting for password screen...", 'success');
               await this.page.waitForTimeout(3000);
               accountClicked = true;
-
-              // Skip to password entry section - set flag
+              emailStepCompleted = true; // Skip email entry - we're going to password screen
               break;
             }
           } catch {}
@@ -547,94 +549,96 @@ export class GeminiScraper {
         }
       }
 
-      // Enter email
-      await this.log("📧 Looking for email input field...", 'info');
+      // Enter email - ONLY if we didn't already complete this step via Account Chooser
+      if (!emailStepCompleted) {
+        await this.log("📧 Looking for email input field...", 'info');
 
-      const emailSelectors = [
-        'input[type="email"]',
-        'input[name="identifier"]',
-        'input[name="email"]',
-        'input[autocomplete="username"]',
-        'input[autocomplete="email"]',
-        '#identifierId',
-        '#Email',
-        'input[aria-label*="email" i]',
-        'input[placeholder*="email" i]'
-      ];
+        const emailSelectors = [
+          'input[type="email"]',
+          'input[name="identifier"]',
+          'input[name="email"]',
+          'input[autocomplete="username"]',
+          'input[autocomplete="email"]',
+          '#identifierId',
+          '#Email',
+          'input[aria-label*="email" i]',
+          'input[placeholder*="email" i]'
+        ];
 
-      let emailEntered = false;
-      for (const selector of emailSelectors) {
-        try {
-          await this.log(`🔍 Trying selector: ${selector}`, 'info');
-          const emailInput = this.page.locator(selector).first();
-          await emailInput.waitFor({ timeout: 10000, state: 'visible' });
-          await this.log(`✓ Found email input with selector: ${selector}`, 'success');
+        let emailEntered = false;
+        for (const selector of emailSelectors) {
+          try {
+            await this.log(`🔍 Trying selector: ${selector}`, 'info');
+            const emailInput = this.page.locator(selector).first();
+            await emailInput.waitFor({ timeout: 10000, state: 'visible' });
+            await this.log(`✓ Found email input with selector: ${selector}`, 'success');
 
-          // HUMAN-LIKE BEHAVIOR: Add random delay before typing (simulate thinking)
-          await this.page.waitForTimeout(500 + Math.random() * 1000);
+            // HUMAN-LIKE BEHAVIOR: Add random delay before typing (simulate thinking)
+            await this.page.waitForTimeout(500 + Math.random() * 1000);
 
-          // HUMAN-LIKE BEHAVIOR: Click the input field first (like a human would)
-          await emailInput.click();
-          await this.page.waitForTimeout(200 + Math.random() * 300);
+            // HUMAN-LIKE BEHAVIOR: Click the input field first (like a human would)
+            await emailInput.click();
+            await this.page.waitForTimeout(200 + Math.random() * 300);
 
-          // HUMAN-LIKE BEHAVIOR: Type with realistic delay between characters (50-150ms per character)
-          await emailInput.clear();
-          await emailInput.type(email, { delay: 50 + Math.random() * 100 });
+            // HUMAN-LIKE BEHAVIOR: Type with realistic delay between characters (50-150ms per character)
+            await emailInput.clear();
+            await emailInput.type(email, { delay: 50 + Math.random() * 100 });
 
-          await this.log(`✓ Email entered successfully`, 'success');
-          emailEntered = true;
-          break;
-        } catch (e: any) {
-          await this.log(`⚠️ Selector ${selector} failed: ${e.message}`, 'warning');
-          continue;
-        }
-      }
-
-      if (!emailEntered) {
-        // FORENSIC: Dump page text and HTML
-        const pageText = await this.page.evaluate(() => document.body.innerText);
-        await this.log(`📄 Page text preview (first 1000 chars): ${pageText.substring(0, 1000)}`, 'error');
-
-        const html = await this.page.content();
-        const htmlPath = `/tmp/gemini-login-fail-${Date.now()}.html`;
-        fs.writeFileSync(htmlPath, html);
-        await this.log(`📄 Page HTML saved: ${htmlPath}`, 'info');
-
-        throw new Error("Could not find email input field. Check logs for page content.");
-      }
-
-      // HUMAN-LIKE BEHAVIOR: Wait a bit before clicking Next (simulate reading)
-      await this.page.waitForTimeout(800 + Math.random() * 1200);
-
-      const nextButtonSelectors = [
-        'button:has-text("Next")',
-        '#identifierNext',
-        'button[type="button"]'
-      ];
-
-      let nextClicked = false;
-      for (const selector of nextButtonSelectors) {
-        try {
-          const nextButton = this.page.locator(selector).first();
-          if (await nextButton.isVisible({ timeout: 2000 })) {
-            // HUMAN-LIKE BEHAVIOR: Small delay before clicking
-            await this.page.waitForTimeout(300 + Math.random() * 400);
-            await nextButton.click();
-            await this.log(`✓ Clicked Next button with selector: ${selector}`, 'success');
-            nextClicked = true;
+            await this.log(`✓ Email entered successfully`, 'success');
+            emailEntered = true;
             break;
+          } catch (e: any) {
+            await this.log(`⚠️ Selector ${selector} failed: ${e.message}`, 'warning');
+            continue;
           }
-        } catch {}
-      }
+        }
 
-      if (!nextClicked) {
-        await this.log("⚠️ Next button not found, pressing Enter", 'warning');
-        await this.page.keyboard.press('Enter');
-      }
+        if (!emailEntered) {
+          // FORENSIC: Dump page text and HTML
+          const pageText = await this.page.evaluate(() => document.body.innerText);
+          await this.log(`📄 Page text preview (first 1000 chars): ${pageText.substring(0, 1000)}`, 'error');
 
-      await this.log("⏳ Waiting 8s for next page to load...", 'info');
-      await this.page.waitForTimeout(8000);
-      await this.log("✓ Next page loaded", 'success');
+          const html = await this.page.content();
+          const htmlPath = `/tmp/gemini-login-fail-${Date.now()}.html`;
+          fs.writeFileSync(htmlPath, html);
+          await this.log(`📄 Page HTML saved: ${htmlPath}`, 'info');
+
+          throw new Error("Could not find email input field. Check logs for page content.");
+        }
+
+        // HUMAN-LIKE BEHAVIOR: Wait a bit before clicking Next (simulate reading)
+        await this.page.waitForTimeout(800 + Math.random() * 1200);
+
+        const nextButtonSelectors = [
+          'button:has-text("Next")',
+          '#identifierNext',
+          'button[type="button"]'
+        ];
+
+        let nextClicked = false;
+        for (const selector of nextButtonSelectors) {
+          try {
+            const nextButton = this.page.locator(selector).first();
+            if (await nextButton.isVisible({ timeout: 2000 })) {
+              // HUMAN-LIKE BEHAVIOR: Small delay before clicking
+              await this.page.waitForTimeout(300 + Math.random() * 400);
+              await nextButton.click();
+              await this.log(`✓ Clicked Next button with selector: ${selector}`, 'success');
+              nextClicked = true;
+              break;
+            }
+          } catch {}
+        }
+
+        if (!nextClicked) {
+          await this.log("⚠️ Next button not found, pressing Enter", 'warning');
+          await this.page.keyboard.press('Enter');
+        }
+
+        await this.log("⏳ Waiting 8s for next page to load...", 'info');
+        await this.page.waitForTimeout(8000);
+        await this.log("✓ Next page loaded", 'success');
+      } // End of email entry block - skip if emailStepCompleted
 
       // SCREENSHOTS DISABLED for faster processing
       // const screenshot2Path = `/tmp/gemini-step2-${Date.now()}.png`;
