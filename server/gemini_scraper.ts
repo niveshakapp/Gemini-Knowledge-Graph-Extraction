@@ -1770,9 +1770,37 @@ export class GeminiScraper {
 
       await this.log(`Total candidates collected: ${candidates.length}`, 'info');
 
-      // FILTER: Remove anything smaller than 2000 chars (excludes prompt schema)
-      const substantialCandidates = candidates.filter(c => c.length >= MIN_SUBSTANTIAL_JSON_LENGTH);
-      await this.log(`After filtering (>= ${MIN_SUBSTANTIAL_JSON_LENGTH} chars): ${substantialCandidates.length} candidates`, 'info');
+      // FILTER: Process candidates with multiple validation checks
+      const substantialCandidates: string[] = [];
+
+      for (let i = 0; i < candidates.length; i++) {
+        let candidate = candidates[i];
+
+        // CLEANUP: Remove markdown code block syntax if present
+        // (Gemini sometimes wraps the output in ```json ... ```)
+        const cleanCandidate = candidate.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+
+        // FILTER 1: Reject the "Empty Schema" from the prompt
+        // The prompt schema contains empty objects like "extraction_metadata": {}
+        // The real data will have "extraction_metadata": { "document_sources": ... }
+        if (cleanCandidate.includes('"extraction_metadata": {}') ||
+            cleanCandidate.includes('"company_identity": {}')) {
+          await this.log(`⚠️ Ignoring candidate ${i + 1} (${cleanCandidate.length} chars) - It appears to be the Prompt Schema`, 'warning');
+          continue;
+        }
+
+        // FILTER 2: Reject short candidates (less than minimum substantial length)
+        if (cleanCandidate.length < MIN_SUBSTANTIAL_JSON_LENGTH) {
+          await this.log(`  Candidate ${i + 1}: Too short (${cleanCandidate.length} chars)`, 'info');
+          continue;
+        }
+
+        // If it passes all filters, add to valid candidates
+        substantialCandidates.push(cleanCandidate);
+        await this.log(`✅ Candidate ${i + 1}: Valid (${cleanCandidate.length} chars)`, 'success');
+      }
+
+      await this.log(`After filtering (schema detection + size >= ${MIN_SUBSTANTIAL_JSON_LENGTH}): ${substantialCandidates.length} candidates`, 'info');
 
       if (substantialCandidates.length === 0) {
         await this.log(`❌ NO SUBSTANTIAL CANDIDATES FOUND`, 'error');
