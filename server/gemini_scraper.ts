@@ -14,10 +14,19 @@ export class GeminiScraper {
   private sessionLoadedFromSource: boolean = false; // Track if session was loaded from DB/env/file
 
   private async log(message: string, level: 'info' | 'success' | 'warning' | 'error' = 'info') {
-    console.log(`[${level}] ${message}`);
+    // Get current URL if page is available
+    let url = '';
+    if (this.page) {
+      try {
+        url = this.page.url();
+      } catch {}
+    }
+
+    const logMessage = url ? `[${url}] ${message}` : message;
+    console.log(`[${level}] ${logMessage}`);
     await storage.createLog({
       logLevel: level,
-      logMessage: message
+      logMessage: logMessage
     });
   }
 
@@ -1224,21 +1233,41 @@ export class GeminiScraper {
       await this.log("✓ Response generation wait finished", 'success');
       await this.log("🔍 Starting DOM evaluation for extraction...", 'info');
 
-      // Check for response completion (any of: delimiters, code blocks, or JSON object)
+      // Check for response completion - just wait for substantial text in model response
       await this.log("⏳ Waiting for response to appear in page...", 'info');
       try {
         await this.page.waitForFunction(
           () => {
-            const text = document.body.innerText;
-            return text.includes('<<<JSON_START>>>') || // Custom delimiters
-                   text.includes('```json') ||           // Markdown code block
-                   (text.includes('{') && text.includes('}')); // JSON object
+            // Look for model response containers with substantial content
+            const modelContainers = Array.from(document.querySelectorAll(
+              '.model-response-text, [data-message-author-role="model"], .message-content, .response-container, [class*="model-response"], [class*="assistant-message"]'
+            )) as HTMLElement[];
+
+            for (const container of modelContainers) {
+              const text = container.innerText || container.textContent || '';
+              // If we find a model response with > 200 chars, assume response is ready
+              if (text.length > 200) {
+                console.log(`Found model response with ${text.length} chars`);
+                return true;
+              }
+            }
+
+            // Fallback: check entire page for JSON-like content
+            const pageText = document.body.innerText;
+            if (pageText.includes('<<<JSON_START>>>') ||
+                pageText.includes('```json') ||
+                (pageText.includes('{') && pageText.length > 1000)) {
+              console.log('Found JSON-like content in page');
+              return true;
+            }
+
+            return false;
           },
-          { timeout: 30000 }
+          { timeout: 45000 } // Increased to 45s for large responses
         );
         await this.log("✓ Response detected in page body", 'success');
       } catch (responseWaitError) {
-        await this.log("⚠️ Response not clearly detected after 30s - proceeding with extraction attempt", 'warning');
+        await this.log("⚠️ Response not clearly detected after 45s - proceeding with extraction attempt anyway", 'warning');
       }
 
       // SCREENSHOTS DISABLED - They freeze on massive DOM from large JSON responses
