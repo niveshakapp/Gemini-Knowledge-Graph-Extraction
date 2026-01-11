@@ -1265,14 +1265,103 @@ export class GeminiScraper {
       await this.page.waitForTimeout(1000);
       await this.log("✓ Prompt injected successfully", 'success');
 
-      await this.log("📤 Sending prompt to Gemini (pressing Enter)...", 'info');
-      await this.page.keyboard.press('Enter');
-      await this.log("✓ Prompt sent", 'success');
+      // CRITICAL: Click the Send button explicitly (Enter key is unreliable)
+      await this.log("📤 Sending prompt to Gemini (clicking Send button)...", 'info');
+
+      const sendButtonSelectors = [
+        'button[aria-label*="Send" i]',           // Aria label with "Send"
+        'button[aria-label*="send message" i]',   // Full aria label
+        'button.send-button',                     // Class-based
+        'button:has(svg)',                        // Button with SVG icon
+        'button[type="submit"]',                  // Submit button
+        'mat-icon[data-mat-icon-name="send"]',    // Material icon
+        'button:has(mat-icon)',                   // Button with mat-icon
+      ];
+
+      let sendClicked = false;
+      for (const selector of sendButtonSelectors) {
+        try {
+          await this.log(`  Trying send button selector: ${selector}`, 'info');
+          const sendButton = this.page.locator(selector).first();
+          if (await sendButton.isVisible({ timeout: 1000 })) {
+            await sendButton.click();
+            await this.log(`✓ Clicked Send button with selector: ${selector}`, 'success');
+            sendClicked = true;
+            break;
+          }
+        } catch (e) {
+          // Try next selector
+        }
+      }
+
+      if (!sendClicked) {
+        await this.log("⚠️ Could not find Send button, falling back to Enter key", 'warning');
+        await this.page.keyboard.press('Enter');
+      }
+
+      // CRITICAL: Wait for generation to START before checking if it's finished
+      await this.log("⏳ Waiting for generation to START (looking for 'Stop generating' button or 'Thinking...')...", 'info');
+
+      let generationStarted = false;
+      try {
+        await this.page.waitForFunction(
+          () => {
+            // Check for "Stop generating" button
+            const stopButton = document.querySelector('button[aria-label*="Stop" i], button:has-text("Stop generating")');
+            if (stopButton && (stopButton as HTMLElement).offsetParent !== null) {
+              return true;
+            }
+
+            // Check for "Thinking..." indicator
+            const bodyText = document.body.innerText;
+            if (bodyText.includes('Thinking') || bodyText.includes('thinking')) {
+              return true;
+            }
+
+            return false;
+          },
+          { timeout: 15000 } // 15 seconds to start generating
+        );
+
+        generationStarted = true;
+        await this.log("✅ Generation STARTED - detected 'Stop generating' button or thinking indicator", 'success');
+
+      } catch (startError) {
+        await this.log("❌ CRITICAL: Generation did not start after 15s - prompt may not have been sent", 'error');
+        await this.log("Attempting to click Send button again...", 'warning');
+
+        // Retry clicking send button
+        for (const selector of sendButtonSelectors) {
+          try {
+            const sendButton = this.page.locator(selector).first();
+            if (await sendButton.isVisible({ timeout: 1000 })) {
+              await sendButton.click();
+              await this.log(`✓ Re-clicked Send button with selector: ${selector}`, 'success');
+              await this.page.waitForTimeout(3000);
+              break;
+            }
+          } catch (e) {
+            // Continue to next selector
+          }
+        }
+
+        // Check again if generation started
+        try {
+          await this.page.waitForFunction(
+            () => {
+              const stopButton = document.querySelector('button[aria-label*="Stop" i], button:has-text("Stop generating")');
+              return stopButton && (stopButton as HTMLElement).offsetParent !== null;
+            },
+            { timeout: 10000 }
+          );
+          generationStarted = true;
+          await this.log("✅ Generation STARTED after retry", 'success');
+        } catch (retryError) {
+          throw new Error('Generation failed to start after multiple attempts. Prompt may not have been sent correctly.');
+        }
+      }
 
       await this.log("⏳ Waiting for Gemini response to complete...", 'info');
-      await this.log("⏳ Initial 5s wait for response to start...", 'info');
-      await this.page.waitForTimeout(5000);
-      await this.log("✓ Initial wait completed", 'success');
 
       // Wait for response to be complete by checking if generation stopped
       await this.log("🔄 Monitoring generation status...", 'info');
