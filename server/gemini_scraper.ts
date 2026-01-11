@@ -1571,21 +1571,76 @@ export class GeminiScraper {
                 // Wait for element to be visible with short timeout
                 await elementLocator.waitFor({ state: 'visible', timeout: 2000 });
 
-                // Extract text
-                const text = await elementLocator.innerText();
+                // DEEP TEXT STITCHING: Handle fragmented JSON across nested elements
+                // Use evaluate() to run custom JS inside the browser to extract all text
+                await this.log(`    Extracting text with deep stitching for element ${i + 1}...`, 'info');
+
+                const text = await elementLocator.evaluate((el) => {
+                  // Helper to extract text from all children, handling Gemini's nested structures
+                  function getDeepText(node: Element): string {
+                    let acc = "";
+
+                    // Special handling for <code-block> components (content is inside <code>)
+                    if (node.tagName.toLowerCase() === 'code-block') {
+                      const codeTag = node.querySelector('code');
+                      if (codeTag) {
+                        return codeTag.innerText + "\n";
+                      }
+                    }
+
+                    // Handle regular <code> tags
+                    if (node.tagName.toLowerCase() === 'code') {
+                      return node.innerText + "\n";
+                    }
+
+                    // Iterate over all child nodes
+                    if (node.childNodes.length > 0) {
+                      node.childNodes.forEach(child => {
+                        if (child.nodeType === Node.TEXT_NODE) {
+                          // Text node - add directly
+                          acc += child.textContent || "";
+                        } else if (child.nodeType === Node.ELEMENT_NODE) {
+                          // Element node - recursively extract
+                          const childEl = child as Element;
+                          const tagName = childEl.tagName.toLowerCase();
+
+                          // Add newlines for block elements to preserve JSON formatting
+                          if (['p', 'div', 'br', 'li', 'tr', 'code-block'].includes(tagName)) {
+                            acc += "\n" + getDeepText(childEl) + "\n";
+                          } else {
+                            acc += getDeepText(childEl);
+                          }
+                        }
+                      });
+                    } else {
+                      // Leaf node - get text content
+                      acc += node.textContent || "";
+                    }
+
+                    return acc;
+                  }
+
+                  // Extract deep text from the root element
+                  return getDeepText(el);
+                });
+
+                // Clean up the stitched text (remove excessive newlines)
+                const cleanText = text.replace(/\n{3,}/g, '\n\n').trim();
+
+                await this.log(`    Extracted ${cleanText.length} chars after stitching`, 'info');
 
                 // Check if this element contains JSON (delimiters OR raw JSON)
                 // Accept if: has custom delimiters OR has JSON-like content ({ and })
-                const hasDelimiters = text.includes('<<<JSON_START>>>');
-                const hasJsonLike = text.includes('{') && text.includes('}');
-                const isSubstantial = text.length > 500;
+                const hasDelimiters = cleanText.includes('<<<JSON_START>>>');
+                const hasJsonLike = cleanText.includes('{') && cleanText.includes('}');
+                const isSubstantial = cleanText.length > 500;
 
-                if (text && (hasDelimiters || hasJsonLike) && isSubstantial) {
-                  fullText = text;
+                if (cleanText && (hasDelimiters || hasJsonLike) && isSubstantial) {
+                  fullText = cleanText;
                   usedLocator = `${selector} (element ${i + 1}/${count})`;
                   const matchType = hasDelimiters ? 'with delimiters' : 'raw JSON';
                   await this.log(`✅ Found valid response at locator "${selector}" (${i + 1}/${count}) - ${matchType}`, 'success');
-                  await this.log(`   Text length: ${text.length} chars`, 'success');
+                  await this.log(`   Text length: ${cleanText.length} chars`, 'success');
                   break;
                 }
               } catch (elemError) {
