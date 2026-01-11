@@ -294,6 +294,11 @@ export class GeminiScraper {
         await this.log('✓ New browser context created', 'success');
       }
 
+      // Grant clipboard permissions (needed for Ctrl+V paste strategy)
+      await this.log('📋 Granting clipboard permissions...', 'info');
+      await this.context.grantPermissions(['clipboard-read', 'clipboard-write']);
+      await this.log('✓ Clipboard permissions granted', 'success');
+
       this.page = await this.context.newPage();
 
       // STEALTH: Comprehensive navigator and API overrides to hide automation
@@ -1220,71 +1225,94 @@ export class GeminiScraper {
       }
 
       await this.log("✓ Prompt box located", 'success');
-      await this.log("📝 Injecting prompt text via JavaScript...", 'info');
 
-      // Use JavaScript evaluation to directly set the content
-      // This bypasses keyboard simulation and handles extremely long prompts instantly
-      await this.page.evaluate((data) => {
-        // Try all possible selectors to find the input
-        const selectors = [
-          'textarea[placeholder*="Enter a prompt" i]',
-          'textarea[aria-label*="prompt" i]',
-          'div[contenteditable="true"]',
-          'textarea[data-test-id*="input"]',
-          'textarea',
-          '.ql-editor',
-          '[role="textbox"]'
-        ];
+      // ========== CLIPBOARD PASTE STRATEGY ==========
+      // JS injection creates "Ghost Text" - Gemini's Angular backend doesn't detect it
+      // Clipboard paste (Ctrl+V) triggers native browser events and forces detection
 
-        let element: HTMLElement | null = null;
+      await this.log("📝 Copying prompt to clipboard and pasting (Ctrl+V)...", 'info');
 
-        for (const selector of selectors) {
-          element = document.querySelector(selector) as HTMLElement;
-          if (element) break;
-        }
-
-        if (element) {
-          // Focus first
-          element.focus();
-
-          // Set content based on element type
-          if (element.tagName === 'TEXTAREA') {
-            (element as HTMLTextAreaElement).value = data.text;
-          } else {
-            element.textContent = data.text;
-          }
-
-          // Trigger input and change events to notify Gemini's reactive UI
-          const inputEvent = new Event('input', { bubbles: true });
-          const changeEvent = new Event('change', { bubbles: true });
-          element.dispatchEvent(inputEvent);
-          element.dispatchEvent(changeEvent);
-        }
-      }, { text: prompt, selector: foundSelector });
-
+      // Step 1: Focus the prompt box
+      await this.log("  Step 1: Focusing prompt box...", 'info');
+      await promptBox.click();
       await this.page.waitForTimeout(500);
-      await this.log("✓ Prompt injected successfully", 'success');
 
-      // CRITICAL: Physical "Wake Up" sequence to enable Send button
-      // Gemini's reactive UI doesn't always detect JS text injection
-      // This forces the browser's event loop to trigger, enabling the Send button
-      await this.log("⚡ Triggering physical wake-up sequence (Space + Backspace)...", 'info');
+      // Step 2: Write prompt to clipboard
+      await this.log("  Step 2: Writing to clipboard...", 'info');
+      await this.page.evaluate((text) => {
+        navigator.clipboard.writeText(text);
+      }, prompt);
+
+      await this.page.waitForTimeout(300);
+      await this.log("  ✓ Prompt copied to clipboard", 'success');
+
+      // Step 3: Paste using Ctrl+V (simulates real user interaction)
+      // Note: On Mac this would be Meta+V, but Render/Linux uses Control+V
+      await this.log("  Step 3: Pasting with Ctrl+V...", 'info');
+      await this.page.keyboard.down('Control');
+      await this.page.keyboard.press('KeyV');
+      await this.page.keyboard.up('Control');
+
+      await this.log("  ✓ Paste command sent (Ctrl+V)", 'success');
+      await this.page.waitForTimeout(2000); // Wait for UI to process the paste
+
+      // Step 4: Verification - Check if text actually appeared
+      await this.log("  Step 4: Verifying paste succeeded...", 'info');
+      let boxValue = "";
 
       try {
-        // Ensure the input is focused
-        await promptBox.focus();
+        boxValue = await promptBox.innerText().catch(() => "");
+        if (!boxValue || boxValue.length === 0) {
+          // Try textContent as fallback
+          boxValue = await promptBox.evaluate(el => (el as HTMLElement).textContent || "");
+        }
+      } catch (e) {
+        await this.log("    Could not read box value, assuming paste worked", 'warning');
+      }
 
-        // Go to end of text, type space, delete space
-        // This forces Gemini's UI to recognize the text and enable Send button
-        await this.page.keyboard.press('End');     // Move cursor to end
-        await this.page.waitForTimeout(100);
-        await this.page.keyboard.type(' ');        // Type a space
-        await this.page.waitForTimeout(100);
-        await this.page.keyboard.press('Backspace'); // Delete the space
+      if (boxValue.length < 100) {
+        await this.log(`⚠️ Paste verification failed (box has only ${boxValue.length} chars). Trying fallback strategy...`, 'warning');
 
-        await this.log("✅ Wake-up sequence completed - Send button should now be enabled", 'success');
-      } catch (wakeupError: any) {
-        await this.log(`⚠️ Wake-up sequence failed: ${wakeupError.message} - proceeding anyway`, 'warning');
+        // Fallback Strategy: JS Inject (all but last char) + Type last char
+        await this.log("  Fallback: JS injection + typing last character...", 'warning');
+
+        await this.page.evaluate((data) => {
+          const selectors = [
+            'textarea[placeholder*="Enter a prompt" i]',
+            'textarea[aria-label*="prompt" i]',
+            'div[contenteditable="true"]',
+            'textarea',
+            '.ql-editor',
+            '[role="textbox"]'
+          ];
+
+          let element: HTMLElement | null = null;
+          for (const selector of selectors) {
+            element = document.querySelector(selector) as HTMLElement;
+            if (element) break;
+          }
+
+          if (element) {
+            element.focus();
+            // Inject all but the last character
+            const textToInject = data.text.slice(0, -1);
+            if (element.tagName === 'TEXTAREA') {
+              (element as HTMLTextAreaElement).value = textToInject;
+            } else {
+              element.textContent = textToInject;
+            }
+          }
+        }, { text: prompt, selector: foundSelector });
+
+        await this.page.waitForTimeout(500);
+
+        // Type the last character manually to trigger events
+        await this.page.keyboard.press('End');
+        await this.page.keyboard.type(prompt.slice(-1));
+
+        await this.log("  ✓ Fallback strategy completed", 'success');
+      } else {
+        await this.log(`✅ Paste verified successfully (${boxValue.length} chars in box)`, 'success');
       }
 
       await this.page.waitForTimeout(1000);
