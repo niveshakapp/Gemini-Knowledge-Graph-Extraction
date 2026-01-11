@@ -45,6 +45,72 @@ export class GeminiScraper {
     return fs.existsSync(sessionPath);
   }
 
+  private async handleGoogleInterstitials() {
+    if (!this.page) return;
+
+    await this.log("🛡️ Checking for Google interstitial screens...", 'info');
+
+    // List of dismiss button texts to look for
+    const dismissButtonTexts = [
+      'Not now',
+      'Skip',
+      'No thanks',
+      "Don't switch",
+      "I'll do this later",
+      'Maybe later',
+      'Skip for now',
+      'Remind me later',
+      'No thank you',
+      'Continue without',
+      'Cancel'
+    ];
+
+    // Try for up to 15 seconds (3 attempts x 5 rounds)
+    const maxAttempts = 3;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      let foundInterstitial = false;
+
+      for (const buttonText of dismissButtonTexts) {
+        try {
+          // Use multiple selector strategies for each text
+          const selectors = [
+            `text="${buttonText}"`,
+            `button:has-text("${buttonText}")`,
+            `[role="button"]:has-text("${buttonText}")`,
+            `a:has-text("${buttonText}")`
+          ];
+
+          for (const selector of selectors) {
+            const button = this.page.locator(selector).first();
+            if (await button.isVisible({ timeout: 500 })) {
+              await this.log(`👋 Found interstitial: "${buttonText}" - clicking to dismiss`, 'info');
+              await button.click();
+              foundInterstitial = true;
+              await this.page.waitForTimeout(2000); // Wait for screen transition
+              await this.log(`✓ Dismissed interstitial screen`, 'success');
+              break;
+            }
+          }
+
+          if (foundInterstitial) break;
+        } catch (e) {
+          // Button not found or not clickable, continue to next
+        }
+      }
+
+      if (!foundInterstitial) {
+        // No interstitials found in this round
+        await this.log(`✓ No interstitials detected (round ${attempt + 1}/${maxAttempts})`, 'success');
+        break;
+      }
+
+      // If we found and dismissed one, check again for another
+      await this.page.waitForTimeout(1000);
+    }
+
+    await this.log("✓ Interstitial check complete", 'success');
+  }
+
   async init(email: string = "", sessionData?: string) {
     try {
       await this.log("🚀 Initializing browser...", 'info');
@@ -753,8 +819,13 @@ export class GeminiScraper {
         await this.page.keyboard.press('Enter');
       }
 
-      await this.log("⏳ Waiting 8s for login completion...", 'info');
-      await this.page.waitForTimeout(8000);
+      // CRITICAL: Handle Google interstitial screens (Passkeys, Recovery Email, etc.)
+      await this.log("⏳ Waiting for page transition...", 'info');
+      await this.page.waitForTimeout(3000); // Initial wait for page to start loading
+      await this.handleGoogleInterstitials(); // Dismiss any interstitial screens
+
+      await this.log("⏳ Waiting for login completion...", 'info');
+      await this.page.waitForTimeout(5000); // Final wait for Gemini to load
       await this.log("✓ Login wait completed", 'success');
 
       // SCREENSHOTS DISABLED for faster processing
