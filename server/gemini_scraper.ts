@@ -1224,16 +1224,21 @@ export class GeminiScraper {
       await this.log("✓ Response generation wait finished", 'success');
       await this.log("🔍 Starting DOM evaluation for extraction...", 'info');
 
-      // CRITICAL: Explicitly wait for delimiter text to appear in page body
-      await this.log("⏳ Waiting for <<<JSON_START>>> delimiter to appear in page...", 'info');
+      // Check for response completion (any of: delimiters, code blocks, or JSON object)
+      await this.log("⏳ Waiting for response to appear in page...", 'info');
       try {
         await this.page.waitForFunction(
-          () => document.body.innerText.includes('<<<JSON_START>>>'),
+          () => {
+            const text = document.body.innerText;
+            return text.includes('<<<JSON_START>>>') || // Custom delimiters
+                   text.includes('```json') ||           // Markdown code block
+                   (text.includes('{') && text.includes('}')); // JSON object
+          },
           { timeout: 30000 }
         );
-        await this.log("✓ Start delimiter detected in page body", 'success');
-      } catch (delimiterWaitError) {
-        await this.log("⚠️ Start delimiter not detected in body after 30s - proceeding anyway (may be hidden)", 'warning');
+        await this.log("✓ Response detected in page body", 'success');
+      } catch (responseWaitError) {
+        await this.log("⚠️ Response not clearly detected after 30s - proceeding with extraction attempt", 'warning');
       }
 
       // SCREENSHOTS DISABLED - They freeze on massive DOM from large JSON responses
@@ -1281,74 +1286,74 @@ export class GeminiScraper {
 
         console.log(`Step 1b: Filtered to ${modelBubbles.length} model-only containers (excluded user messages)`);
 
-        // Step 2: Filter - Keep only MODEL bubbles that contain <<<JSON_START>>>
-        const bubblesWithDelimiter = modelBubbles.filter(bubble => {
+        // Step 2: Filter - Keep MODEL bubbles that contain JSON (any format)
+        const bubblesWithJson = modelBubbles.filter(bubble => {
           const text = bubble.innerText || bubble.textContent || '';
+          // Check for any JSON indicator: delimiters, code blocks, or JSON objects
           const hasDelimiter = text.includes('<<<JSON_START>>>');
-          if (hasDelimiter) {
-            console.log(`Found MODEL bubble with delimiter (${text.length} chars)`);
+          const hasCodeBlock = text.includes('```json') || text.includes('```');
+          const hasJsonObject = text.includes('{') && text.includes('}');
+          const hasAnyJson = hasDelimiter || hasCodeBlock || hasJsonObject;
+
+          if (hasAnyJson && text.length > 500) {
+            console.log(`Found MODEL bubble with JSON content (${text.length} chars, delimiter:${hasDelimiter}, codeblock:${hasCodeBlock}, object:${hasJsonObject})`);
           }
-          return hasDelimiter;
+
+          return hasAnyJson && text.length > 500; // Only keep substantial responses
         });
 
-        console.log(`Step 2: Filtered to ${bubblesWithDelimiter.length} MODEL containers with delimiters (ignoring user prompt)`);
+        console.log(`Step 2: Filtered to ${bubblesWithJson.length} MODEL containers with JSON content`);
 
-        if (bubblesWithDelimiter.length === 0) {
-          console.error('CRITICAL: No containers found with <<<JSON_START>>> delimiter');
-          console.error('=== ATTEMPTING GLOBAL BODY FALLBACK (REGEX ON FULL PAGE) ===');
+        if (bubblesWithJson.length === 0) {
+          console.error('CRITICAL: No containers found with JSON content');
+          console.error('=== ATTEMPTING GLOBAL BODY FALLBACK (3-STAGE EXTRACTION ON FULL PAGE) ===');
 
-          // FALLBACK: Extract directly from entire page text using regex
+          // FALLBACK: Extract directly from entire page text using 3-stage system
           const fullPageText = document.body.innerText;
-          console.log(`Attempting regex on full page text (${fullPageText.length} chars)`);
+          console.log(`Attempting extraction on full page text (${fullPageText.length} chars)`);
 
-          const MIN_VALID_JSON_LENGTH = 500; // Skip placeholder text
-          const pageMatches: string[] = [];
+          const MIN_VALID_JSON_LENGTH = 500;
+          let globalJsonString: string | null = null;
 
-          // Try STRICT regex first (both start and end delimiters) - find ALL matches
-          const strictRegex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/g;
-          let pageMatch;
+          // STRATEGY 1: Strict Custom Delimiters
+          console.log('Global Strategy 1: Custom delimiters');
+          const globalDelimiterRegex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/;
+          const globalDelimiterMatch = fullPageText.match(globalDelimiterRegex);
 
-          while ((pageMatch = strictRegex.exec(fullPageText)) !== null) {
-            const candidateJson = pageMatch[1].trim();
-
-            // Skip short matches (prompt placeholders)
-            if (candidateJson.length < MIN_VALID_JSON_LENGTH) {
-              console.warn(`Global fallback: Skipping short match (${candidateJson.length} chars) - likely prompt placeholder`);
-              continue;
-            }
-
-            pageMatches.push(candidateJson);
-            console.log(`Global fallback: Found valid match: ${candidateJson.length} characters`);
+          if (globalDelimiterMatch && globalDelimiterMatch[1] && globalDelimiterMatch[1].trim().length > MIN_VALID_JSON_LENGTH) {
+            globalJsonString = globalDelimiterMatch[1].trim();
+            console.log(`✅ Global Strategy 1 SUCCESS: ${globalJsonString.length} chars`);
+            return globalJsonString;
           }
 
-          // If strict regex found valid matches, return the longest one
-          if (pageMatches.length > 0) {
-            const longest = pageMatches.reduce((longest, current) =>
-              current.length > longest.length ? current : longest
-            );
-            console.log(`✅ STRICT regex on full page: Selected longest match (${longest.length} chars) from ${pageMatches.length} candidates`);
-            return longest;
+          // STRATEGY 2: Markdown Code Blocks
+          console.log('Global Strategy 2: Markdown code blocks');
+          const globalMarkdownRegex = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/i;
+          const globalMarkdownMatch = fullPageText.match(globalMarkdownRegex);
+
+          if (globalMarkdownMatch && globalMarkdownMatch[1] && globalMarkdownMatch[1].trim().length > MIN_VALID_JSON_LENGTH) {
+            globalJsonString = globalMarkdownMatch[1].trim();
+            console.log(`✅ Global Strategy 2 SUCCESS: ${globalJsonString.length} chars`);
+            return globalJsonString;
           }
 
-          // Try FALLBACK regex (start delimiter to end of text)
-          console.warn('STRICT regex found no valid matches on full page, trying FALLBACK regex...');
-          const fallbackRegex = /<<<JSON_START>>>([\s\S]*)$/;
-          const fallbackMatch = fullPageText.match(fallbackRegex);
+          // STRATEGY 3: Brute Force (first { to last })
+          console.log('Global Strategy 3: Brute force extraction');
+          const globalFirstOpen = fullPageText.indexOf('{');
+          const globalLastClose = fullPageText.lastIndexOf('}');
 
-          if (fallbackMatch && fallbackMatch[1]) {
-            const candidateJson = fallbackMatch[1].trim();
+          if (globalFirstOpen !== -1 && globalLastClose !== -1 && globalLastClose > globalFirstOpen) {
+            const globalCandidate = fullPageText.substring(globalFirstOpen, globalLastClose + 1);
 
-            // Apply size filter
-            if (candidateJson.length >= MIN_VALID_JSON_LENGTH) {
-              console.log(`⚠️ FALLBACK regex match on full page: ${candidateJson.length} chars (end delimiter may be missing)`);
-              return candidateJson;
-            } else {
-              console.warn(`Skipping fallback match (${candidateJson.length} chars) - too short, likely placeholder`);
+            if (globalCandidate.length > MIN_VALID_JSON_LENGTH) {
+              globalJsonString = globalCandidate;
+              console.log(`✅ Global Strategy 3 SUCCESS: ${globalJsonString.length} chars`);
+              return globalJsonString;
             }
           }
 
-          // If even regex on full page fails, log forensics
-          console.error('❌ No valid matches found on full page (all were < 500 chars or no matches)');
+          // All strategies failed
+          console.error('❌❌❌ ALL GLOBAL STRATEGIES FAILED ❌❌❌');
           console.error('=== FORENSIC DEBUG: First 1000 chars of document.body.innerText ===');
           console.error(fullPageText.substring(0, 1000));
           console.error('=== END FORENSIC DEBUG ===');
@@ -1356,78 +1361,84 @@ export class GeminiScraper {
         }
 
         // Step 3: Select the ABSOLUTE LAST element from filtered list (most recent model response)
-        const lastBubble = bubblesWithDelimiter[bubblesWithDelimiter.length - 1];
-        console.log(`Step 3: Selected ABSOLUTE LAST MODEL bubble (index ${bubblesWithDelimiter.length - 1} of ${bubblesWithDelimiter.length})`);
+        const lastBubble = bubblesWithJson[bubblesWithJson.length - 1];
+        console.log(`Step 3: Selected ABSOLUTE LAST MODEL bubble (index ${bubblesWithJson.length - 1} of ${bubblesWithJson.length})`);
 
         // Step 4: Extract innerText from the last model response ONLY
         const fullText = lastBubble.innerText || lastBubble.textContent || '';
         console.log(`Step 4: Extracted innerText from LAST MODEL bubble: ${fullText.length} characters`);
         console.log(`Step 4b: First 200 chars of extracted text: ${fullText.substring(0, 200)}`);
 
-        // Step 5: Run STRICT regex to find content between delimiters
-        console.log('Step 5: Attempting STRICT regex (with both start and end tags)...');
-        const strictRegex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/g;
-        const matches: string[] = [];
-        let match;
+        // ===== 3-STAGE FALLBACK EXTRACTION SYSTEM =====
+        const MIN_VALID_JSON_LENGTH = 500;
+        let jsonString: string | null = null;
 
-        const MIN_VALID_JSON_LENGTH = 500; // Skip placeholder text from prompt instructions
+        // STRATEGY 1: Strict Custom Delimiters (Best Case)
+        console.log('Strategy 1: Attempting strict custom delimiters (<<<JSON_START>>> ... <<<JSON_END>>>)');
+        const delimiterRegex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/;
+        const delimiterMatch = fullText.match(delimiterRegex);
 
-        while ((match = strictRegex.exec(fullText)) !== null) {
-          const candidateJson = match[1].trim();
-
-          // STRICT SIZE FILTER: Skip instruction placeholders (< 500 chars)
-          if (candidateJson.length < MIN_VALID_JSON_LENGTH) {
-            console.warn(`Skipping short match (${candidateJson.length} chars) - likely prompt placeholder`);
-            continue;
-          }
-
-          matches.push(candidateJson);
-          console.log(`Found valid match: ${candidateJson.length} characters`);
+        if (delimiterMatch && delimiterMatch[1] && delimiterMatch[1].trim().length > MIN_VALID_JSON_LENGTH) {
+          jsonString = delimiterMatch[1].trim();
+          console.log(`✅ Strategy 1 SUCCESS: Found JSON with custom delimiters (${jsonString.length} chars)`);
+        } else if (delimiterMatch) {
+          console.warn(`⚠️ Strategy 1 found delimiters but content too short (${delimiterMatch[1]?.trim().length || 0} chars) - trying next strategy`);
+        } else {
+          console.warn(`⚠️ Strategy 1 FAILED: No custom delimiters found - trying next strategy`);
         }
 
-        // Step 5b: FALLBACK regex if strict fails (handles truncation)
-        if (matches.length === 0) {
-          console.warn('STRICT regex failed or only found placeholders - attempting FALLBACK regex (start tag to end of string)...');
-          const fallbackRegex = /<<<JSON_START>>>([\s\S]*)$/;
-          const fallbackMatch = fullText.match(fallbackRegex);
+        // STRATEGY 2: Markdown Code Blocks (Common Case)
+        if (!jsonString) {
+          console.log('Strategy 2: Attempting markdown code blocks (```json ... ```)');
+          const markdownRegex = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/i;
+          const markdownMatch = fullText.match(markdownRegex);
 
-          if (fallbackMatch && fallbackMatch[1]) {
-            const candidateJson = fallbackMatch[1].trim();
+          if (markdownMatch && markdownMatch[1] && markdownMatch[1].trim().length > MIN_VALID_JSON_LENGTH) {
+            jsonString = markdownMatch[1].trim();
+            console.log(`✅ Strategy 2 SUCCESS: Found JSON in markdown code block (${jsonString.length} chars)`);
+          } else if (markdownMatch) {
+            console.warn(`⚠️ Strategy 2 found code block but content too short (${markdownMatch[1]?.trim().length || 0} chars) - trying next strategy`);
+          } else {
+            console.warn(`⚠️ Strategy 2 FAILED: No markdown code blocks found - trying next strategy`);
+          }
+        }
 
-            // Apply same size filter to fallback
-            if (candidateJson.length >= MIN_VALID_JSON_LENGTH) {
-              matches.push(candidateJson);
-              console.log(`Found FALLBACK match: ${candidateJson.length} characters (end tag may be truncated)`);
+        // STRATEGY 3: Brute Force Object Discovery (Handles "JSON { ... }" format)
+        if (!jsonString) {
+          console.log('Strategy 3: Brute force extraction (first { to last })');
+          const firstOpen = fullText.indexOf('{');
+          const lastClose = fullText.lastIndexOf('}');
+
+          if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+            const candidate = fullText.substring(firstOpen, lastClose + 1);
+
+            // VALIDATION: Only accept if it looks like a substantial payload
+            if (candidate.length > MIN_VALID_JSON_LENGTH) {
+              jsonString = candidate;
+              console.log(`✅ Strategy 3 SUCCESS: Brute force extraction (${jsonString.length} chars)`);
+              console.log(`   Preview: ${candidate.substring(0, 100)}...`);
             } else {
-              console.warn(`Skipping fallback match (${candidateJson.length} chars) - too short, likely placeholder`);
+              console.warn(`⚠️ Strategy 3 found braces but content too short (${candidate.length} chars)`);
             }
+          } else {
+            console.error(`❌ Strategy 3 FAILED: Could not find valid { } pair`);
           }
         }
 
-        // Step 5c: FORENSIC DEBUGGING if all regex attempts fail
-        if (matches.length === 0) {
-          console.error('CRITICAL: No valid matches found (all were < 500 chars or no matches)');
-          console.error('=== FORENSIC DEBUG: First 500 chars of lastBubble.innerText ===');
-          console.error(fullText.substring(0, 500));
+        // FINAL VALIDATION
+        if (!jsonString) {
+          console.error('❌❌❌ ALL STRATEGIES FAILED ❌❌❌');
+          console.error('=== FORENSIC DEBUG: First 1000 chars of lastBubble.innerText ===');
+          console.error(fullText.substring(0, 1000));
           console.error('=== END FORENSIC DEBUG ===');
-          return '';
+          throw new Error('No valid JSON payload (>500 chars) found using any extraction strategy');
         }
 
-        // Step 6: If multiple valid matches, select the LONGEST one
-        let jsonContent = matches[0];
+        console.log(`✅✅✅ EXTRACTION SUCCESS ✅✅✅`);
+        console.log(`Final JSON length: ${jsonString.length} characters`);
+        console.log(`First 200 chars: ${jsonString.substring(0, 200)}`);
 
-        if (matches.length > 1) {
-          // Find the longest match (real response is typically 20K+ chars)
-          jsonContent = matches.reduce((longest, current) =>
-            current.length > longest.length ? current : longest
-          );
-          console.log(`Step 6: Multiple valid matches found, selected LONGEST: ${jsonContent.length} chars`);
-        }
-
-        console.log(`SUCCESS: Final extracted JSON: ${jsonContent.length} characters`);
-        console.log(`First 200 chars: ${jsonContent.substring(0, 200)}`);
-
-        return jsonContent;
+        return jsonString;
       });
 
       await this.log("✓ DOM evaluation completed successfully", 'success');
