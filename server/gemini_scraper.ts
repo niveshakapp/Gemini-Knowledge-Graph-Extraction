@@ -2,6 +2,7 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { storage } from "./storage";
 import * as fs from "fs";
 import * as path from "path";
+import { jsonrepair } from "jsonrepair";
 
 export class GeminiScraper {
   private browser: Browser | null = null;
@@ -1619,15 +1620,31 @@ export class GeminiScraper {
       await this.log(`📊 JSON Preview: ${responseText.substring(0, 150)}...`, 'info');
 
       // ALWAYS use raw JSON - NEVER parse into knowledge graph format
-      await this.log("🔍 Parsing JSON...", 'info');
+      await this.log("🔍 Parsing JSON with repair strategy...", 'info');
       let knowledgeGraph: any;
+
       try {
+        // Attempt 1: Standard Parse (Fastest - no overhead)
         knowledgeGraph = JSON.parse(responseText);
-        await this.log("✓ JSON parsed successfully - using as-is", 'success');
-      } catch (jsonError: any) {
-        await this.log(`❌ CRITICAL: Response is not valid JSON - ${jsonError.message}`, 'error');
-        await this.log(`📄 Invalid JSON snippet: ${responseText.substring(0, 500)}`, 'error');
-        throw new Error("Gemini response is not valid JSON");
+        await this.log("✅ JSON parsed successfully with standard parser", 'success');
+      } catch (e1: any) {
+        await this.log(`⚠️ Standard parse failed: ${e1.message}`, 'warning');
+        await this.log("🔧 Attempting auto-repair (fixes missing/trailing commas, quotes, etc.)...", 'info');
+
+        try {
+          // Attempt 2: Auto-Repair (Fixes commas, quotes, trailing commas, etc.)
+          const repairedJson = jsonrepair(responseText);
+          knowledgeGraph = JSON.parse(repairedJson);
+          await this.log("✅ JSON successfully repaired and parsed!", 'success');
+          await this.log(`🔧 Repair fixed: ${e1.message}`, 'info');
+        } catch (e2: any) {
+          // Both standard and repair failed - log forensic info and throw
+          await this.log(`❌ CRITICAL: Standard parse failed: ${e1.message}`, 'error');
+          await this.log(`❌ CRITICAL: Repair also failed: ${e2.message}`, 'error');
+          await this.log(`📄 First 500 chars of invalid JSON: ${responseText.substring(0, 500)}`, 'error');
+          await this.log(`📄 Last 500 chars of invalid JSON: ${responseText.substring(responseText.length - 500)}`, 'error');
+          throw new Error(`JSON Parse Failed: ${e1.message} | Repair Failed: ${e2.message}`);
+        }
       }
 
       const nodeCount = knowledgeGraph.nodes?.length || 0;
