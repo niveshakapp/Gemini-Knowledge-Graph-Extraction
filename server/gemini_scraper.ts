@@ -1364,9 +1364,21 @@ export class GeminiScraper {
 
       // Step 5: Check if generation started (Quick Check)
       const generationStartedAfterClick = await this.page.evaluate(() => {
-        const stopButton = document.querySelector('button[aria-label*="Stop" i], button:has-text("Stop generating")');
+        // Use standard CSS selectors (no Playwright-specific syntax like 'i' flag or :has-text)
+        const buttons = document.querySelectorAll('button[aria-label]');
+        let hasStopButton = false;
+
+        for (const btn of Array.from(buttons)) {
+          const label = (btn as HTMLButtonElement).getAttribute('aria-label') || '';
+          // Manual case-insensitive check
+          if (label.toLowerCase().includes('stop') && (btn as HTMLElement).offsetParent !== null) {
+            hasStopButton = true;
+            break;
+          }
+        }
+
         const hasThinking = document.body.innerText.includes('Thinking') || document.body.innerText.includes('thinking');
-        return !!(stopButton && (stopButton as HTMLElement).offsetParent !== null) || hasThinking;
+        return hasStopButton || hasThinking;
       });
 
       // Step 6: Strategy B - Press Enter as safety net if click didn't work
@@ -1385,10 +1397,13 @@ export class GeminiScraper {
       try {
         await this.page.waitForFunction(
           () => {
-            // Check for "Stop generating" button
-            const stopButton = document.querySelector('button[aria-label*="Stop" i], button:has-text("Stop generating")');
-            if (stopButton && (stopButton as HTMLElement).offsetParent !== null) {
-              return true;
+            // Check for "Stop generating" button (using standard CSS selectors)
+            const buttons = document.querySelectorAll('button[aria-label]');
+            for (const btn of Array.from(buttons)) {
+              const label = (btn as HTMLButtonElement).getAttribute('aria-label') || '';
+              if (label.toLowerCase().includes('stop') && (btn as HTMLElement).offsetParent !== null) {
+                return true;
+              }
             }
 
             // Check for "Thinking..." indicator
@@ -1426,8 +1441,15 @@ export class GeminiScraper {
         try {
           await this.page.waitForFunction(
             () => {
-              const stopButton = document.querySelector('button[aria-label*="Stop" i], button:has-text("Stop generating")');
-              return stopButton && (stopButton as HTMLElement).offsetParent !== null;
+              // Use standard CSS selectors only
+              const buttons = document.querySelectorAll('button[aria-label]');
+              for (const btn of Array.from(buttons)) {
+                const label = (btn as HTMLButtonElement).getAttribute('aria-label') || '';
+                if (label.toLowerCase().includes('stop') && (btn as HTMLElement).offsetParent !== null) {
+                  return true;
+                }
+              }
+              return false;
             },
             { timeout: 10000 }
           );
