@@ -1341,170 +1341,191 @@ export class GeminiScraper {
       // const timestamp3 = Date.now();
       // await this.page.screenshot({ path: `/tmp/gemini-before-copy-${timestamp3}.png`, fullPage: true });
 
-      await this.log("📋 Extracting JSON using LAST-CHILD PRIORITY strategy", 'info');
-
-      // STRICT LAST-CHILD PRIORITY LOGIC (Non-negotiable)
-      // 1. Find ALL message containers
-      // 2. Filter only those containing <<<JSON_START>>>
-      // 3. Take LAST from filtered list
-      // 4. Extract innerText
-      // 5. Run regex
-      // 6. If suspiciously short, find longest match
-      let responseText = "";
-      let copySuccess = false;
+      await this.log("📋 Extracting JSON using Playwright Shadow-DOM Compatible Locators", 'info');
 
       // Set extended timeout for large DOM parsing (60 seconds)
       this.page.setDefaultTimeout(60000);
-      await this.log("⏱️ Set 60s timeout for DOM parsing", 'info');
+      await this.log("⏱️ Set 60s timeout for Shadow DOM extraction", 'info');
 
-      responseText = await this.page.evaluate(() => {
-        console.log('=== STARTING SPECIFIC SELECTOR HIERARCHY EXTRACTION ===');
+      // PLAYWRIGHT LOCATOR STRATEGY (Shadow DOM Compatible)
+      // Playwright locators AUTOMATICALLY pierce Shadow DOM boundaries
+      // This fixes the issue where document.querySelectorAll returns 0 elements
 
-        // SPECIFIC SELECTOR HIERARCHY (Prioritized by HTML structure)
-        // This prevents capturing sidebar/menu text by targeting the actual message container
-        const responseSelectors = [
-          'message-content .markdown',           // Primary: The markdown content inside message-content
-          'structured-content-container',        // Secondary: The structured container
-          '.model-response-text',                // Tertiary: Class-based selector
-          '[data-message-author-role="model"]'   // Quaternary: Attribute-based selector
-        ];
+      let fullText = "";
+      let usedLocator = "";
 
-        let targetText = "";
-        let usedSelector = "";
+      // Define locator hierarchy (prioritized)
+      const locatorSelectors = [
+        '.model-response-text',                // Primary: Direct class selector (pierces Shadow DOM)
+        'message-content .markdown',           // Secondary: Nested markdown content
+        'structured-content-container',        // Tertiary: Structured wrapper
+        '[data-message-author-role="model"]'   // Quaternary: Attribute-based
+      ];
 
-        // Step 1: Find the LAST valid response element containing JSON delimiters
-        console.log(`Checking ${responseSelectors.length} specific selectors in priority order...`);
+      await this.log(`🔍 Trying ${locatorSelectors.length} Playwright locators (Shadow DOM compatible)...`, 'info');
 
-        for (const selector of responseSelectors) {
-          console.log(`Trying selector: ${selector}`);
-          const elements = document.querySelectorAll(selector);
-          console.log(`  Found ${elements.length} elements`);
+      // Try each locator in priority order
+      for (const selector of locatorSelectors) {
+        try {
+          await this.log(`  Trying locator: ${selector}`, 'info');
+          const locator = this.page.locator(selector);
 
-          if (elements.length > 0) {
-            // Check elements in reverse (last-child priority)
-            for (let i = elements.length - 1; i >= 0; i--) {
-              const element = elements[i] as HTMLElement;
-              const text = element.innerText || element.textContent || '';
+          // Get count of matching elements
+          const count = await locator.count();
+          await this.log(`    Found ${count} elements`, 'info');
 
-              // Check if this element contains JSON delimiters
-              if (text.includes('<<<JSON_START>>>') && text.length > 500) {
-                targetText = text;
-                usedSelector = selector;
-                console.log(`✅ Found valid response at selector "${selector}" (element ${i}/${elements.length})`);
-                console.log(`   Text length: ${text.length} chars`);
-                break;
+          if (count > 0) {
+            // Check elements in reverse order (last-child priority)
+            for (let i = count - 1; i >= 0; i--) {
+              try {
+                const elementLocator = locator.nth(i);
+
+                // Wait for element to be visible with short timeout
+                await elementLocator.waitFor({ state: 'visible', timeout: 2000 });
+
+                // Extract text
+                const text = await elementLocator.innerText();
+
+                // Check if this element contains JSON delimiters
+                if (text && text.includes('<<<JSON_START>>>') && text.length > 500) {
+                  fullText = text;
+                  usedLocator = `${selector} (element ${i + 1}/${count})`;
+                  await this.log(`✅ Found valid response at locator "${selector}" (${i + 1}/${count})`, 'success');
+                  await this.log(`   Text length: ${text.length} chars`, 'success');
+                  break;
+                }
+              } catch (elemError) {
+                // Element not visible or not accessible, continue to next
+                continue;
               }
             }
 
-            if (targetText) break; // Found valid text, exit selector loop
+            if (fullText) break; // Found valid text, exit locator loop
           }
+        } catch (locatorError: any) {
+          await this.log(`    Locator failed: ${locatorError.message}`, 'warning');
+          continue; // Try next locator
         }
-
-        // Step 2: Validate we found a target (DO NOT fallback to document.body)
-        if (!targetText) {
-          console.error('❌ CRITICAL: Could not locate response container with JSON delimiters');
-          console.error('Selector hierarchy exhausted. Checked:');
-          responseSelectors.forEach(sel => console.error(`  - ${sel}`));
-          console.error('');
-          console.error('FORENSIC DEBUG: Page structure sample:');
-          console.error('message-content elements:', document.querySelectorAll('message-content').length);
-          console.error('structured-content-container elements:', document.querySelectorAll('structured-content-container').length);
-          console.error('.model-response-text elements:', document.querySelectorAll('.model-response-text').length);
-          console.error('[data-message-author-role="model"] elements:', document.querySelectorAll('[data-message-author-role="model"]').length);
-          throw new Error('Could not locate response container with JSON delimiters. No fallback to document.body to avoid sidebar pollution.');
-        }
-
-        console.log(`✅ Using text from selector: "${usedSelector}"`);
-        console.log(`✅ Extracted text length: ${targetText.length} characters`);
-
-        // Step 3: Use the targeted text for JSON extraction
-        const fullText = targetText;
-        console.log(`Step 4b: First 200 chars of extracted text: ${fullText.substring(0, 200)}`);
-
-        // ===== LONGEST MATCH WINS STRATEGY =====
-        // Collect ALL possible JSON candidates, filter by size, return the longest
-        const MIN_SUBSTANTIAL_JSON_LENGTH = 2000; // Real data is 15k+, schema is only 900 chars
-        const candidates: string[] = [];
-
-        console.log('=== COLLECTING ALL JSON CANDIDATES ===');
-
-        // CANDIDATE SOURCE 1: Custom Delimiters (find ALL matches, not just first)
-        console.log('Source 1: Scanning for custom delimiter matches...');
-        const delimiterRegex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/g;
-        let delimiterMatch;
-        while ((delimiterMatch = delimiterRegex.exec(fullText)) !== null) {
-          const content = delimiterMatch[1].trim();
-          if (content.length > 0) {
-            candidates.push(content);
-            console.log(`  Found delimiter candidate: ${content.length} chars`);
-          }
-        }
-
-        // CANDIDATE SOURCE 2: Markdown Code Blocks (find ALL matches)
-        console.log('Source 2: Scanning for markdown code blocks...');
-        const markdownRegex = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/gi;
-        let markdownMatch;
-        while ((markdownMatch = markdownRegex.exec(fullText)) !== null) {
-          const content = markdownMatch[1].trim();
-          if (content.length > 0) {
-            candidates.push(content);
-            console.log(`  Found markdown candidate: ${content.length} chars`);
-          }
-        }
-
-        // CANDIDATE SOURCE 3: Brute Force (first { to last })
-        console.log('Source 3: Brute force extraction...');
-        const firstOpen = fullText.indexOf('{');
-        const lastClose = fullText.lastIndexOf('}');
-        if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
-          const content = fullText.substring(firstOpen, lastClose + 1);
-          if (content.length > 0) {
-            candidates.push(content);
-            console.log(`  Found brute force candidate: ${content.length} chars`);
-          }
-        }
-
-        console.log(`Total candidates collected: ${candidates.length}`);
-
-        // FILTER: Remove anything smaller than 2000 chars (excludes prompt schema)
-        const substantialCandidates = candidates.filter(c => c.length >= MIN_SUBSTANTIAL_JSON_LENGTH);
-        console.log(`After filtering (>= ${MIN_SUBSTANTIAL_JSON_LENGTH} chars): ${substantialCandidates.length} candidates`);
-
-        if (substantialCandidates.length === 0) {
-          console.error('❌ NO SUBSTANTIAL CANDIDATES FOUND');
-          console.error(`All ${candidates.length} candidates were too small (< ${MIN_SUBSTANTIAL_JSON_LENGTH} chars)`);
-          console.error('Candidate sizes:', candidates.map(c => c.length));
-          console.error('=== FORENSIC DEBUG: First 1000 chars ===');
-          console.error(fullText.substring(0, 1000));
-          throw new Error(`No JSON payload >= ${MIN_SUBSTANTIAL_JSON_LENGTH} chars found. Found ${candidates.length} small candidates.`);
-        }
-
-        // SORT: Longest first
-        substantialCandidates.sort((a, b) => b.length - a.length);
-
-        // SELECT: Return the longest
-        const longestMatch = substantialCandidates[0];
-        console.log(`✅✅✅ LONGEST MATCH WINS ✅✅✅`);
-        console.log(`Selected: ${longestMatch.length} chars (from ${substantialCandidates.length} substantial candidates)`);
-        if (substantialCandidates.length > 1) {
-          console.log(`Other candidates: ${substantialCandidates.slice(1).map(c => c.length + ' chars').join(', ')}`);
-        }
-        console.log(`First 200 chars: ${longestMatch.substring(0, 200)}`);
-
-        return longestMatch;
-      });
-
-      await this.log("✓ DOM evaluation completed successfully", 'success');
-
-      if (responseText && responseText.length > 10) {
-        await this.log(`✓ Extracted JSON using delimiters (${responseText.length} characters)`, 'success');
-        copySuccess = true;
-      } else {
-        await this.log(`⚠️ Extraction returned empty or very short response (${responseText.length} chars)`, 'warning');
       }
 
-      // If delimiter extraction fails, throw specific error with forensic info
-      if (!copySuccess || !responseText) {
+      // Validate we found a target
+      if (!fullText) {
+        await this.log("❌ CRITICAL: Could not locate response container with JSON delimiters using Playwright locators", 'error');
+        await this.log("Locator hierarchy exhausted. Trying forensic fallback...", 'warning');
+
+        // Forensic fallback: Get counts for debugging
+        const forensicInfo = await this.page.evaluate(() => {
+          return {
+            'message-content': document.querySelectorAll('message-content').length,
+            'structured-content-container': document.querySelectorAll('structured-content-container').length,
+            '.model-response-text': document.querySelectorAll('.model-response-text').length,
+            '[data-message-author-role="model"]': document.querySelectorAll('[data-message-author-role="model"]').length,
+            'bodyTextLength': document.body.innerText.length
+          };
+        });
+
+        await this.log(`📊 Forensic counts: ${JSON.stringify(forensicInfo, null, 2)}`, 'error');
+
+        // Last resort: Try to get any text from page
+        await this.log("⚠️ Attempting fallback to full page text (may include sidebar)", 'warning');
+        fullText = await this.page.evaluate(() => document.body.innerText);
+
+        if (!fullText || !fullText.includes('<<<JSON_START>>>')) {
+          throw new Error('Could not locate response container with JSON delimiters. Shadow DOM extraction failed and no valid text found on page.');
+        }
+
+        usedLocator = 'document.body (fallback)';
+      }
+
+      await this.log(`✅ Using text from locator: "${usedLocator}"`, 'success');
+      await this.log(`✅ Extracted text length: ${fullText.length} characters`, 'success');
+      await this.log(`📄 First 200 chars: ${fullText.substring(0, 200)}`, 'info');
+
+      // ===== LONGEST MATCH WINS STRATEGY =====
+      // Extract JSON from the fullText using regex and select the longest match
+      await this.log("🔍 Running JSON extraction with 'Longest Match Wins' strategy...", 'info');
+
+      const MIN_SUBSTANTIAL_JSON_LENGTH = 2000; // Real data is 15k+, schema is only 900 chars
+      const candidates: string[] = [];
+
+      // CANDIDATE SOURCE 1: Custom Delimiters (find ALL matches, not just first)
+      await this.log("  Source 1: Scanning for custom delimiter matches...", 'info');
+      const delimiterRegex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/g;
+      let delimiterMatch;
+      while ((delimiterMatch = delimiterRegex.exec(fullText)) !== null) {
+        const content = delimiterMatch[1].trim();
+        if (content.length > 0) {
+          candidates.push(content);
+          await this.log(`    Found delimiter candidate: ${content.length} chars`, 'info');
+        }
+      }
+
+      // CANDIDATE SOURCE 2: Markdown Code Blocks (find ALL matches)
+      await this.log("  Source 2: Scanning for markdown code blocks...", 'info');
+      const markdownRegex = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/gi;
+      let markdownMatch;
+      while ((markdownMatch = markdownRegex.exec(fullText)) !== null) {
+        const content = markdownMatch[1].trim();
+        if (content.length > 0) {
+          candidates.push(content);
+          await this.log(`    Found markdown candidate: ${content.length} chars`, 'info');
+        }
+      }
+
+      // CANDIDATE SOURCE 3: Brute Force (first { to last })
+      await this.log("  Source 3: Brute force extraction...", 'info');
+      const firstOpen = fullText.indexOf('{');
+      const lastClose = fullText.lastIndexOf('}');
+      if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+        const content = fullText.substring(firstOpen, lastClose + 1);
+        if (content.length > 0) {
+          candidates.push(content);
+          await this.log(`    Found brute force candidate: ${content.length} chars`, 'info');
+        }
+      }
+
+      await this.log(`Total candidates collected: ${candidates.length}`, 'info');
+
+      // FILTER: Remove anything smaller than 2000 chars (excludes prompt schema)
+      const substantialCandidates = candidates.filter(c => c.length >= MIN_SUBSTANTIAL_JSON_LENGTH);
+      await this.log(`After filtering (>= ${MIN_SUBSTANTIAL_JSON_LENGTH} chars): ${substantialCandidates.length} candidates`, 'info');
+
+      if (substantialCandidates.length === 0) {
+        await this.log(`❌ NO SUBSTANTIAL CANDIDATES FOUND`, 'error');
+        await this.log(`All ${candidates.length} candidates were too small (< ${MIN_SUBSTANTIAL_JSON_LENGTH} chars)`, 'error');
+        await this.log(`Candidate sizes: ${candidates.map(c => c.length).join(', ')}`, 'error');
+        await this.log(`=== FORENSIC DEBUG: First 1000 chars ===`, 'error');
+        await this.log(fullText.substring(0, 1000), 'error');
+        throw new Error(`No JSON payload >= ${MIN_SUBSTANTIAL_JSON_LENGTH} chars found. Found ${candidates.length} small candidates.`);
+      }
+
+      // SORT: Longest first
+      substantialCandidates.sort((a, b) => b.length - a.length);
+
+      // SELECT: Return the longest
+      const responseText = substantialCandidates[0];
+      await this.log(`✅✅✅ LONGEST MATCH WINS ✅✅✅`, 'success');
+      await this.log(`Selected: ${responseText.length} chars (from ${substantialCandidates.length} substantial candidates)`, 'success');
+      if (substantialCandidates.length > 1) {
+        await this.log(`Other candidates: ${substantialCandidates.slice(1).map(c => c.length + ' chars').join(', ')}`, 'info');
+      }
+      await this.log(`First 200 chars: ${responseText.substring(0, 200)}`, 'info');
+
+      await this.log("✓ Shadow DOM extraction completed successfully", 'success');
+
+      // Validate we have substantial response text
+      if (!responseText || responseText.length < 10) {
+        await this.log(`❌ CRITICAL: Extraction returned empty or very short response (${responseText?.length || 0} chars)`, 'error');
+        throw new Error(`Extraction failed: response too short (${responseText?.length || 0} chars)`);
+      }
+
+      await this.log(`✓ Final extracted JSON ready (${responseText.length} characters)`, 'success');
+
+      // Old validation block removed - we now validate earlier in the extraction process
+      // The new Playwright locator logic already handles all error cases
+
+      // Skip old forensic fallback - keeping code below for compatibility
+      if (false) {  // This block is disabled but preserved for reference
         await this.log("❌ CRITICAL: JSON delimiters not found in response", 'error');
         await this.log("💡 Attempting to capture full raw response for debugging...", 'info');
 
