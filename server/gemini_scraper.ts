@@ -1084,40 +1084,69 @@ export class GeminiScraper {
       // Find and fill the prompt textarea with multiple selector strategies
       await this.log("🔍 Locating prompt input box", 'info');
 
-      // PRIORITY: New Gemini UI selectors from forensic analysis
+      // PRIORITY: Selectors based on forensic analysis (EXACT ORDER from user specification)
       const promptSelectors = [
-        // High-Precision Selectors (New Gemini UI - January 2025)
-        'div.ql-editor.textarea',  // Specific class combination from forensic
-        'div[role="textbox"][aria-label="Enter a prompt here"]',  // Exact ARIA match
-        'rich-textarea .ql-editor',  // Nested structure
-        '.new-input-ui',  // New UI class
-        'div.ql-editor',  // Quill editor div (more specific than just .ql-editor)
+        // 1. The "Forensic Match" (Exact classes seen in logs)
+        'div.ql-editor.textarea',
 
-        // Standard Fallbacks (Older UI patterns)
-        'div[contenteditable="true"]',  // Contenteditable div
-        '.ql-editor',  // Quill editor class (generic)
-        '[role="textbox"]',  // Role-based selector
-        'textarea[placeholder*="Enter a prompt" i]',  // Textarea with prompt placeholder
-        'textarea[aria-label*="prompt" i]',  // Textarea with prompt aria-label
-        'textarea[data-test-id*="input"]',  // Data attribute
-        'textarea'  // Any textarea as last resort
+        // 2. The "New UI" Match
+        '.new-input-ui',
+
+        // 3. The ARIA Match (Robust against class changes)
+        'div[aria-label="Enter a prompt here"]',
+
+        // 4. Role-based selector
+        'div[role="textbox"]',
+
+        // 5. Nested structure fallback
+        'rich-textarea .ql-editor',
+
+        // 6. Contenteditable fallback
+        'div[contenteditable="true"]'
       ];
 
       let promptBox = null;
       let foundSelector = '';
 
-      // CRITICAL: Increase timeout to 5000ms and iterate through ALL selectors
-      for (const selector of promptSelectors) {
-        try {
-          const box = this.page.locator(selector).first();
-          await box.waitFor({ timeout: 5000, state: 'visible' });  // Increased from 3000ms
-          promptBox = box;
-          foundSelector = selector;
-          await this.log(`✓ Prompt box found with selector: ${selector}`, 'success');
-          break;
-        } catch (e) {
-          await this.log(`⚠️ Selector ${selector} not found, trying next...`, 'info');
+      // SMART WAIT LOOP: Check all selectors repeatedly for 10 seconds
+      // The forensic log found the element after the error, which means it loads lazily
+      await this.log("⏳ Starting Smart Wait Loop (10s) - checking all selectors repeatedly...", 'info');
+
+      const maxWaitTime = 10000; // 10 seconds total
+      const startTime = Date.now();
+      const checkInterval = 500; // 500ms between iterations
+      let iteration = 0;
+
+      while (!promptBox && (Date.now() - startTime) < maxWaitTime) {
+        iteration++;
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        await this.log(`🔄 Iteration ${iteration} (${elapsed}s elapsed) - checking all ${promptSelectors.length} selectors...`, 'info');
+
+        for (const selector of promptSelectors) {
+          try {
+            const box = this.page.locator(selector).first();
+            // Quick check with 100ms timeout
+            if (await box.isVisible({ timeout: 100 })) {
+              promptBox = box;
+              foundSelector = selector;
+              await this.log(`✅ SUCCESS! Prompt box found with selector: ${selector} (after ${elapsed}s, iteration ${iteration})`, 'success');
+              break;
+            }
+          } catch (e) {
+            // Continue to next selector
+          }
         }
+
+        // If not found yet, wait 500ms before next iteration
+        if (!promptBox) {
+          await this.page.waitForTimeout(checkInterval);
+        }
+      }
+
+      // Log final result
+      if (!promptBox) {
+        const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+        await this.log(`❌ Smart Wait Loop exhausted after ${totalTime}s (${iteration} iterations) - no selector matched`, 'error');
       }
 
       if (!promptBox) {
