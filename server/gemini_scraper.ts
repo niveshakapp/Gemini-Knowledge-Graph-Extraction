@@ -1290,28 +1290,31 @@ export class GeminiScraper {
       await this.page.waitForTimeout(1000);
       await this.log("✓ Prompt ready to send", 'success');
 
-      // CRITICAL: Click the Send button explicitly (Enter key is unreliable)
-      await this.log("📤 Sending prompt to Gemini (clicking Send button)...", 'info');
+      // ========== ROBUST "DOUBLE-TAP" SENDING STRATEGY ==========
+      // Strategy: Force Click + Enter key as safety net
+      // Handles cases where clicks are ignored by reactive UI
 
+      await this.log("📤 Sending prompt to Gemini (Double-Tap strategy)...", 'info');
+
+      // Step 1: Find Send button with primary selectors
       const sendButtonSelectors = [
-        'button[aria-label*="Send" i]',           // Aria label with "Send"
-        'button[aria-label*="send message" i]',   // Full aria label
-        'button.send-button',                     // Class-based
-        'button:has(svg)',                        // Button with SVG icon
-        'button[type="submit"]',                  // Submit button
-        'mat-icon[data-mat-icon-name="send"]',    // Material icon
-        'button:has(mat-icon)',                   // Button with mat-icon
+        'button[aria-label*="Send" i]',
+        'button[aria-label="Send message"]',
+        'button.send-button',
+        'button:has(svg)',
+        'button[type="submit"]'
       ];
 
-      let sendClicked = false;
+      let sendButton = null;
+      let usedSelector = '';
+
       for (const selector of sendButtonSelectors) {
         try {
-          await this.log(`  Trying send button selector: ${selector}`, 'info');
-          const sendButton = this.page.locator(selector).first();
-          if (await sendButton.isVisible({ timeout: 1000 })) {
-            await sendButton.click();
-            await this.log(`✓ Clicked Send button with selector: ${selector}`, 'success');
-            sendClicked = true;
+          const locator = this.page.locator(selector).first();
+          if (await locator.isVisible({ timeout: 1000 })) {
+            sendButton = locator;
+            usedSelector = selector;
+            await this.log(`  Found Send button with selector: ${selector}`, 'info');
             break;
           }
         } catch (e) {
@@ -1319,12 +1322,63 @@ export class GeminiScraper {
         }
       }
 
-      if (!sendClicked) {
-        await this.log("⚠️ Could not find Send button, falling back to Enter key", 'warning');
-        await this.page.keyboard.press('Enter');
+      if (!sendButton) {
+        await this.log("⚠️ Could not find Send button with any selector", 'warning');
       }
 
-      // CRITICAL: Wait for generation to START before checking if it's finished
+      // Step 2: Check if Send button is enabled (if found)
+      if (sendButton) {
+        const isEnabled = await sendButton.isEnabled().catch(() => false);
+
+        if (!isEnabled) {
+          await this.log("⚠️ Send button still DISABLED. Performing emergency wake-up...", 'warning');
+
+          // Emergency wake-up: Type real characters to force UI update
+          try {
+            await this.page.keyboard.press('End');
+            await this.page.keyboard.type(' .'); // Type space + period
+            await this.page.waitForTimeout(500);
+            await this.page.keyboard.press('Backspace');
+            await this.page.keyboard.press('Backspace'); // Remove both characters
+            await this.log("  Emergency wake-up completed", 'info');
+          } catch (emergencyError: any) {
+            await this.log(`  Emergency wake-up failed: ${emergencyError.message}`, 'warning');
+          }
+        } else {
+          await this.log("✓ Send button is ENABLED", 'success');
+        }
+      }
+
+      // Step 3: Strategy A - Force Click the Send button
+      if (sendButton) {
+        try {
+          await sendButton.click({ force: true }); // Force click bypasses actionability checks
+          await this.log(`✓ Clicked Send button (force) with selector: ${usedSelector}`, 'success');
+        } catch (clickError: any) {
+          await this.log(`⚠️ Force click failed: ${clickError.message}`, 'warning');
+        }
+      }
+
+      // Step 4: Wait 1 second to see if click triggered generation
+      await this.page.waitForTimeout(1000);
+
+      // Step 5: Check if generation started (Quick Check)
+      const generationStartedAfterClick = await this.page.evaluate(() => {
+        const stopButton = document.querySelector('button[aria-label*="Stop" i], button:has-text("Stop generating")');
+        const hasThinking = document.body.innerText.includes('Thinking') || document.body.innerText.includes('thinking');
+        return !!(stopButton && (stopButton as HTMLElement).offsetParent !== null) || hasThinking;
+      });
+
+      // Step 6: Strategy B - Press Enter as safety net if click didn't work
+      if (!generationStartedAfterClick) {
+        await this.log("⚠️ Click didn't trigger generation. Pressing ENTER as safety net...", 'warning');
+        await this.page.keyboard.press('Enter');
+        await this.page.waitForTimeout(1000);
+      } else {
+        await this.log("✅ Click successfully triggered generation", 'success');
+      }
+
+      // Step 7: Final Verification - Wait for generation to START (with retry)
       await this.log("⏳ Waiting for generation to START (looking for 'Stop generating' button or 'Thinking...')...", 'info');
 
       let generationStarted = false;
@@ -1352,25 +1406,23 @@ export class GeminiScraper {
         await this.log("✅ Generation STARTED - detected 'Stop generating' button or thinking indicator", 'success');
 
       } catch (startError) {
-        await this.log("❌ CRITICAL: Generation did not start after 15s - prompt may not have been sent", 'error');
-        await this.log("Attempting to click Send button again...", 'warning');
+        await this.log("❌ CRITICAL: Generation did not start after 15s - attempting final retry", 'error');
 
-        // Retry clicking send button
-        for (const selector of sendButtonSelectors) {
+        // Final retry: Click again + Enter
+        if (sendButton) {
           try {
-            const sendButton = this.page.locator(selector).first();
-            if (await sendButton.isVisible({ timeout: 1000 })) {
-              await sendButton.click();
-              await this.log(`✓ Re-clicked Send button with selector: ${selector}`, 'success');
-              await this.page.waitForTimeout(3000);
-              break;
-            }
+            await sendButton.click({ force: true });
+            await this.log("  Final retry: Clicked Send button again", 'info');
           } catch (e) {
-            // Continue to next selector
+            // Ignore
           }
         }
 
-        // Check again if generation started
+        await this.page.keyboard.press('Enter');
+        await this.log("  Final retry: Pressed Enter", 'info');
+        await this.page.waitForTimeout(3000);
+
+        // Check one more time
         try {
           await this.page.waitForFunction(
             () => {
@@ -1380,9 +1432,9 @@ export class GeminiScraper {
             { timeout: 10000 }
           );
           generationStarted = true;
-          await this.log("✅ Generation STARTED after retry", 'success');
+          await this.log("✅ Generation STARTED after final retry", 'success');
         } catch (retryError) {
-          throw new Error('Generation failed to start after multiple attempts. Prompt may not have been sent correctly.');
+          throw new Error('Generation failed to start after multiple attempts (Double-Tap strategy). Prompt may not have been sent correctly.');
         }
       }
 
