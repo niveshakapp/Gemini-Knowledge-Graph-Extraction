@@ -1220,7 +1220,7 @@ export class GeminiScraper {
       }
 
       await this.log("✓ Prompt box located", 'success');
-      await this.log("📝 Injecting prompt text via JavaScript (bypassing keyboard simulation for large prompts)...", 'info');
+      await this.log("📝 Injecting prompt text via JavaScript...", 'info');
 
       // Use JavaScript evaluation to directly set the content
       // This bypasses keyboard simulation and handles extremely long prompts instantly
@@ -1254,7 +1254,7 @@ export class GeminiScraper {
             element.textContent = data.text;
           }
 
-          // Trigger input and change events to notify Gemini
+          // Trigger input and change events to notify Gemini's reactive UI
           const inputEvent = new Event('input', { bubbles: true });
           const changeEvent = new Event('change', { bubbles: true });
           element.dispatchEvent(inputEvent);
@@ -1262,8 +1262,33 @@ export class GeminiScraper {
         }
       }, { text: prompt, selector: foundSelector });
 
-      await this.page.waitForTimeout(1000);
+      await this.page.waitForTimeout(500);
       await this.log("✓ Prompt injected successfully", 'success');
+
+      // CRITICAL: Physical "Wake Up" sequence to enable Send button
+      // Gemini's reactive UI doesn't always detect JS text injection
+      // This forces the browser's event loop to trigger, enabling the Send button
+      await this.log("⚡ Triggering physical wake-up sequence (Space + Backspace)...", 'info');
+
+      try {
+        // Ensure the input is focused
+        await promptBox.focus();
+
+        // Go to end of text, type space, delete space
+        // This forces Gemini's UI to recognize the text and enable Send button
+        await this.page.keyboard.press('End');     // Move cursor to end
+        await this.page.waitForTimeout(100);
+        await this.page.keyboard.type(' ');        // Type a space
+        await this.page.waitForTimeout(100);
+        await this.page.keyboard.press('Backspace'); // Delete the space
+
+        await this.log("✅ Wake-up sequence completed - Send button should now be enabled", 'success');
+      } catch (wakeupError: any) {
+        await this.log(`⚠️ Wake-up sequence failed: ${wakeupError.message} - proceeding anyway`, 'warning');
+      }
+
+      await this.page.waitForTimeout(1000);
+      await this.log("✓ Prompt ready to send", 'success');
 
       // CRITICAL: Click the Send button explicitly (Enter key is unreliable)
       await this.log("📤 Sending prompt to Gemini (clicking Send button)...", 'info');
