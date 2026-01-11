@@ -1084,23 +1084,33 @@ export class GeminiScraper {
       // Find and fill the prompt textarea with multiple selector strategies
       await this.log("🔍 Locating prompt input box", 'info');
 
+      // PRIORITY: New Gemini UI selectors from forensic analysis
       const promptSelectors = [
+        // High-Precision Selectors (New Gemini UI - January 2025)
+        'div.ql-editor.textarea',  // Specific class combination from forensic
+        'div[role="textbox"][aria-label="Enter a prompt here"]',  // Exact ARIA match
+        'rich-textarea .ql-editor',  // Nested structure
+        '.new-input-ui',  // New UI class
+        'div.ql-editor',  // Quill editor div (more specific than just .ql-editor)
+
+        // Standard Fallbacks (Older UI patterns)
+        'div[contenteditable="true"]',  // Contenteditable div
+        '.ql-editor',  // Quill editor class (generic)
+        '[role="textbox"]',  // Role-based selector
         'textarea[placeholder*="Enter a prompt" i]',  // Textarea with prompt placeholder
         'textarea[aria-label*="prompt" i]',  // Textarea with prompt aria-label
-        'div[contenteditable="true"]',  // Contenteditable div
         'textarea[data-test-id*="input"]',  // Data attribute
-        'textarea',  // Any textarea as fallback
-        '.ql-editor',  // Quill editor class
-        '[role="textbox"]'  // Role-based selector
+        'textarea'  // Any textarea as last resort
       ];
 
       let promptBox = null;
       let foundSelector = '';
 
+      // CRITICAL: Increase timeout to 5000ms and iterate through ALL selectors
       for (const selector of promptSelectors) {
         try {
           const box = this.page.locator(selector).first();
-          await box.waitFor({ timeout: 3000, state: 'visible' });
+          await box.waitFor({ timeout: 5000, state: 'visible' });  // Increased from 3000ms
           promptBox = box;
           foundSelector = selector;
           await this.log(`✓ Prompt box found with selector: ${selector}`, 'success');
@@ -1118,6 +1128,9 @@ export class GeminiScraper {
           const textareas = Array.from(document.querySelectorAll('textarea'));
           const editables = Array.from(document.querySelectorAll('[contenteditable="true"]'));
           const textboxes = Array.from(document.querySelectorAll('[role="textbox"]'));
+          const qlEditors = Array.from(document.querySelectorAll('.ql-editor'));
+          const richTextareas = Array.from(document.querySelectorAll('rich-textarea'));
+          const newInputs = Array.from(document.querySelectorAll('.new-input-ui'));
 
           return {
             url: window.location.href,
@@ -1131,13 +1144,34 @@ export class GeminiScraper {
             editables: editables.map(e => ({
               tag: e.tagName,
               id: e.id,
-              classes: e.className
+              classes: e.className,
+              ariaLabel: e.getAttribute('aria-label')
             })),
             textboxes: textboxes.map(t => ({
               tag: t.tagName,
               id: t.id,
               classes: t.className,
-              ariaLabel: t.getAttribute('aria-label')
+              ariaLabel: t.getAttribute('aria-label'),
+              visible: (t as HTMLElement).offsetParent !== null
+            })),
+            qlEditors: qlEditors.map(q => ({
+              tag: q.tagName,
+              id: q.id,
+              classes: q.className,
+              ariaLabel: q.getAttribute('aria-label'),
+              visible: (q as HTMLElement).offsetParent !== null
+            })),
+            richTextareas: richTextareas.map(r => ({
+              tag: r.tagName,
+              id: r.id,
+              classes: r.className,
+              hasQlEditor: r.querySelector('.ql-editor') !== null
+            })),
+            newInputs: newInputs.map(n => ({
+              tag: n.tagName,
+              id: n.id,
+              classes: n.className,
+              ariaLabel: n.getAttribute('aria-label')
             })),
             bodyText: document.body.innerText.substring(0, 500)
           };
@@ -1147,6 +1181,9 @@ export class GeminiScraper {
         await this.log(`📄 Textareas found: ${JSON.stringify(pageInfo.textareas, null, 2)}`, 'error');
         await this.log(`📄 Editables found: ${JSON.stringify(pageInfo.editables, null, 2)}`, 'error');
         await this.log(`📄 Textboxes found: ${JSON.stringify(pageInfo.textboxes, null, 2)}`, 'error');
+        await this.log(`📄 Quill Editors (.ql-editor) found: ${JSON.stringify(pageInfo.qlEditors, null, 2)}`, 'error');
+        await this.log(`📄 Rich Textareas found: ${JSON.stringify(pageInfo.richTextareas, null, 2)}`, 'error');
+        await this.log(`📄 New Input UI found: ${JSON.stringify(pageInfo.newInputs, null, 2)}`, 'error');
         await this.log(`📄 Page text: ${pageInfo.bodyText}`, 'error');
 
         throw new Error('Could not locate prompt input box with any selector. See forensic logs above.');
