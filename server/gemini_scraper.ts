@@ -1358,129 +1358,67 @@ export class GeminiScraper {
       await this.log("⏱️ Set 60s timeout for DOM parsing", 'info');
 
       responseText = await this.page.evaluate(() => {
-        console.log('=== STARTING LAST-CHILD PRIORITY EXTRACTION ===');
+        console.log('=== STARTING SPECIFIC SELECTOR HIERARCHY EXTRACTION ===');
 
-        // Step 1: Find ALL potential MODEL response containers (exclude user messages)
-        const allBubbles = Array.from(document.querySelectorAll(
-          '.model-response-text, [data-message-author-role="model"], .message-content, message-content, .response-container, [class*="model-response"], [class*="assistant-message"], .agent-turn, .markdown, .message-text'
-        )) as HTMLElement[];
+        // SPECIFIC SELECTOR HIERARCHY (Prioritized by HTML structure)
+        // This prevents capturing sidebar/menu text by targeting the actual message container
+        const responseSelectors = [
+          'message-content .markdown',           // Primary: The markdown content inside message-content
+          'structured-content-container',        // Secondary: The structured container
+          '.model-response-text',                // Tertiary: Class-based selector
+          '[data-message-author-role="model"]'   // Quaternary: Attribute-based selector
+        ];
 
-        console.log(`Step 1: Found ${allBubbles.length} total potential model message containers`);
+        let targetText = "";
+        let usedSelector = "";
 
-        // Filter out user messages by checking for user-specific attributes
-        const modelBubbles = allBubbles.filter(bubble => {
-          const role = bubble.getAttribute('data-message-author-role');
-          const classes = bubble.className || '';
+        // Step 1: Find the LAST valid response element containing JSON delimiters
+        console.log(`Checking ${responseSelectors.length} specific selectors in priority order...`);
 
-          // Exclude if explicitly marked as user message
-          if (role === 'user' || classes.includes('user-message') || classes.includes('user-turn')) {
-            return false;
-          }
+        for (const selector of responseSelectors) {
+          console.log(`Trying selector: ${selector}`);
+          const elements = document.querySelectorAll(selector);
+          console.log(`  Found ${elements.length} elements`);
 
-          return true;
-        });
+          if (elements.length > 0) {
+            // Check elements in reverse (last-child priority)
+            for (let i = elements.length - 1; i >= 0; i--) {
+              const element = elements[i] as HTMLElement;
+              const text = element.innerText || element.textContent || '';
 
-        console.log(`Step 1b: Filtered to ${modelBubbles.length} model-only containers (excluded user messages)`);
-
-        // Step 2: Filter - Keep MODEL bubbles that contain JSON (any format)
-        const bubblesWithJson = modelBubbles.filter(bubble => {
-          const text = bubble.innerText || bubble.textContent || '';
-          // Check for any JSON indicator: delimiters, code blocks, or JSON objects
-          const hasDelimiter = text.includes('<<<JSON_START>>>');
-          const hasCodeBlock = text.includes('```json') || text.includes('```');
-          const hasJsonObject = text.includes('{') && text.includes('}');
-          const hasAnyJson = hasDelimiter || hasCodeBlock || hasJsonObject;
-
-          if (hasAnyJson && text.length > 500) {
-            console.log(`Found MODEL bubble with JSON content (${text.length} chars, delimiter:${hasDelimiter}, codeblock:${hasCodeBlock}, object:${hasJsonObject})`);
-          }
-
-          return hasAnyJson && text.length > 500; // Only keep substantial responses
-        });
-
-        console.log(`Step 2: Filtered to ${bubblesWithJson.length} MODEL containers with JSON content`);
-
-        if (bubblesWithJson.length === 0) {
-          console.error('CRITICAL: No containers found with JSON content');
-          console.error('=== ATTEMPTING GLOBAL BODY FALLBACK (LONGEST MATCH WINS ON FULL PAGE) ===');
-
-          // FALLBACK: Extract directly from entire page text using "Longest Match Wins"
-          const fullPageText = document.body.innerText;
-          console.log(`Attempting extraction on full page text (${fullPageText.length} chars)`);
-
-          const MIN_SUBSTANTIAL_JSON_LENGTH = 2000;
-          const globalCandidates: string[] = [];
-
-          console.log('=== COLLECTING ALL GLOBAL JSON CANDIDATES ===');
-
-          // CANDIDATE SOURCE 1: Custom Delimiters (ALL matches)
-          console.log('Global Source 1: Scanning for custom delimiter matches...');
-          const globalDelimiterRegex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/g;
-          let globalDelimiterMatch;
-          while ((globalDelimiterMatch = globalDelimiterRegex.exec(fullPageText)) !== null) {
-            const content = globalDelimiterMatch[1].trim();
-            if (content.length > 0) {
-              globalCandidates.push(content);
-              console.log(`  Found global delimiter candidate: ${content.length} chars`);
+              // Check if this element contains JSON delimiters
+              if (text.includes('<<<JSON_START>>>') && text.length > 500) {
+                targetText = text;
+                usedSelector = selector;
+                console.log(`✅ Found valid response at selector "${selector}" (element ${i}/${elements.length})`);
+                console.log(`   Text length: ${text.length} chars`);
+                break;
+              }
             }
+
+            if (targetText) break; // Found valid text, exit selector loop
           }
-
-          // CANDIDATE SOURCE 2: Markdown Code Blocks (ALL matches)
-          console.log('Global Source 2: Scanning for markdown code blocks...');
-          const globalMarkdownRegex = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/gi;
-          let globalMarkdownMatch;
-          while ((globalMarkdownMatch = globalMarkdownRegex.exec(fullPageText)) !== null) {
-            const content = globalMarkdownMatch[1].trim();
-            if (content.length > 0) {
-              globalCandidates.push(content);
-              console.log(`  Found global markdown candidate: ${content.length} chars`);
-            }
-          }
-
-          // CANDIDATE SOURCE 3: Brute Force
-          console.log('Global Source 3: Brute force extraction...');
-          const globalFirstOpen = fullPageText.indexOf('{');
-          const globalLastClose = fullPageText.lastIndexOf('}');
-          if (globalFirstOpen !== -1 && globalLastClose !== -1 && globalLastClose > globalFirstOpen) {
-            const content = fullPageText.substring(globalFirstOpen, globalLastClose + 1);
-            if (content.length > 0) {
-              globalCandidates.push(content);
-              console.log(`  Found global brute force candidate: ${content.length} chars`);
-            }
-          }
-
-          console.log(`Total global candidates collected: ${globalCandidates.length}`);
-
-          // FILTER: Remove anything smaller than 2000 chars
-          const globalSubstantialCandidates = globalCandidates.filter(c => c.length >= MIN_SUBSTANTIAL_JSON_LENGTH);
-          console.log(`After filtering (>= ${MIN_SUBSTANTIAL_JSON_LENGTH} chars): ${globalSubstantialCandidates.length} candidates`);
-
-          if (globalSubstantialCandidates.length === 0) {
-            console.error('❌ NO SUBSTANTIAL GLOBAL CANDIDATES FOUND');
-            console.error(`All ${globalCandidates.length} candidates were too small`);
-            console.error('Candidate sizes:', globalCandidates.map(c => c.length));
-            console.error('=== FORENSIC DEBUG: First 1000 chars ===');
-            console.error(fullPageText.substring(0, 1000));
-            return '';
-          }
-
-          // SORT: Longest first
-          globalSubstantialCandidates.sort((a, b) => b.length - a.length);
-
-          // SELECT: Return the longest
-          const globalLongestMatch = globalSubstantialCandidates[0];
-          console.log(`✅✅✅ GLOBAL LONGEST MATCH WINS ✅✅✅`);
-          console.log(`Selected: ${globalLongestMatch.length} chars (from ${globalSubstantialCandidates.length} substantial candidates)`);
-          return globalLongestMatch;
         }
 
-        // Step 3: Select the ABSOLUTE LAST element from filtered list (most recent model response)
-        const lastBubble = bubblesWithJson[bubblesWithJson.length - 1];
-        console.log(`Step 3: Selected ABSOLUTE LAST MODEL bubble (index ${bubblesWithJson.length - 1} of ${bubblesWithJson.length})`);
+        // Step 2: Validate we found a target (DO NOT fallback to document.body)
+        if (!targetText) {
+          console.error('❌ CRITICAL: Could not locate response container with JSON delimiters');
+          console.error('Selector hierarchy exhausted. Checked:');
+          responseSelectors.forEach(sel => console.error(`  - ${sel}`));
+          console.error('');
+          console.error('FORENSIC DEBUG: Page structure sample:');
+          console.error('message-content elements:', document.querySelectorAll('message-content').length);
+          console.error('structured-content-container elements:', document.querySelectorAll('structured-content-container').length);
+          console.error('.model-response-text elements:', document.querySelectorAll('.model-response-text').length);
+          console.error('[data-message-author-role="model"] elements:', document.querySelectorAll('[data-message-author-role="model"]').length);
+          throw new Error('Could not locate response container with JSON delimiters. No fallback to document.body to avoid sidebar pollution.');
+        }
 
-        // Step 4: Extract innerText from the last model response ONLY
-        const fullText = lastBubble.innerText || lastBubble.textContent || '';
-        console.log(`Step 4: Extracted innerText from LAST MODEL bubble: ${fullText.length} characters`);
+        console.log(`✅ Using text from selector: "${usedSelector}"`);
+        console.log(`✅ Extracted text length: ${targetText.length} characters`);
+
+        // Step 3: Use the targeted text for JSON extraction
+        const fullText = targetText;
         console.log(`Step 4b: First 200 chars of extracted text: ${fullText.substring(0, 200)}`);
 
         // ===== LONGEST MATCH WINS STRATEGY =====
