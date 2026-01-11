@@ -1276,8 +1276,8 @@ export class GeminiScraper {
       // Wait for response to be complete by checking if generation stopped
       await this.log("🔄 Monitoring generation status...", 'info');
       let waitTime = 0;
-      const maxWaitTime = 120000; // 2 minutes max
-      while (waitTime < maxWaitTime) {
+      const maxResponseWaitTime = 120000; // 2 minutes max
+      while (waitTime < maxResponseWaitTime) {
         const isGenerating = await this.page.locator('button:has-text("Stop generating")').isVisible().catch(() => false);
         if (!isGenerating) {
           await this.log("✓ Response generation completed", 'success');
@@ -1290,7 +1290,7 @@ export class GeminiScraper {
         waitTime += 2000;
       }
 
-      if (waitTime >= maxWaitTime) {
+      if (waitTime >= maxResponseWaitTime) {
         await this.log("⚠️ Maximum wait time reached (2 minutes)", 'warning');
       }
 
