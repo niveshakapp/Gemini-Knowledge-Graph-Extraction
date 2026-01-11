@@ -1335,58 +1335,76 @@ export class GeminiScraper {
 
         if (bubblesWithJson.length === 0) {
           console.error('CRITICAL: No containers found with JSON content');
-          console.error('=== ATTEMPTING GLOBAL BODY FALLBACK (3-STAGE EXTRACTION ON FULL PAGE) ===');
+          console.error('=== ATTEMPTING GLOBAL BODY FALLBACK (LONGEST MATCH WINS ON FULL PAGE) ===');
 
-          // FALLBACK: Extract directly from entire page text using 3-stage system
+          // FALLBACK: Extract directly from entire page text using "Longest Match Wins"
           const fullPageText = document.body.innerText;
           console.log(`Attempting extraction on full page text (${fullPageText.length} chars)`);
 
-          const MIN_VALID_JSON_LENGTH = 500;
-          let globalJsonString: string | null = null;
+          const MIN_SUBSTANTIAL_JSON_LENGTH = 2000;
+          const globalCandidates: string[] = [];
 
-          // STRATEGY 1: Strict Custom Delimiters
-          console.log('Global Strategy 1: Custom delimiters');
-          const globalDelimiterRegex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/;
-          const globalDelimiterMatch = fullPageText.match(globalDelimiterRegex);
+          console.log('=== COLLECTING ALL GLOBAL JSON CANDIDATES ===');
 
-          if (globalDelimiterMatch && globalDelimiterMatch[1] && globalDelimiterMatch[1].trim().length > MIN_VALID_JSON_LENGTH) {
-            globalJsonString = globalDelimiterMatch[1].trim();
-            console.log(`✅ Global Strategy 1 SUCCESS: ${globalJsonString.length} chars`);
-            return globalJsonString;
-          }
-
-          // STRATEGY 2: Markdown Code Blocks
-          console.log('Global Strategy 2: Markdown code blocks');
-          const globalMarkdownRegex = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/i;
-          const globalMarkdownMatch = fullPageText.match(globalMarkdownRegex);
-
-          if (globalMarkdownMatch && globalMarkdownMatch[1] && globalMarkdownMatch[1].trim().length > MIN_VALID_JSON_LENGTH) {
-            globalJsonString = globalMarkdownMatch[1].trim();
-            console.log(`✅ Global Strategy 2 SUCCESS: ${globalJsonString.length} chars`);
-            return globalJsonString;
-          }
-
-          // STRATEGY 3: Brute Force (first { to last })
-          console.log('Global Strategy 3: Brute force extraction');
-          const globalFirstOpen = fullPageText.indexOf('{');
-          const globalLastClose = fullPageText.lastIndexOf('}');
-
-          if (globalFirstOpen !== -1 && globalLastClose !== -1 && globalLastClose > globalFirstOpen) {
-            const globalCandidate = fullPageText.substring(globalFirstOpen, globalLastClose + 1);
-
-            if (globalCandidate.length > MIN_VALID_JSON_LENGTH) {
-              globalJsonString = globalCandidate;
-              console.log(`✅ Global Strategy 3 SUCCESS: ${globalJsonString.length} chars`);
-              return globalJsonString;
+          // CANDIDATE SOURCE 1: Custom Delimiters (ALL matches)
+          console.log('Global Source 1: Scanning for custom delimiter matches...');
+          const globalDelimiterRegex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/g;
+          let globalDelimiterMatch;
+          while ((globalDelimiterMatch = globalDelimiterRegex.exec(fullPageText)) !== null) {
+            const content = globalDelimiterMatch[1].trim();
+            if (content.length > 0) {
+              globalCandidates.push(content);
+              console.log(`  Found global delimiter candidate: ${content.length} chars`);
             }
           }
 
-          // All strategies failed
-          console.error('❌❌❌ ALL GLOBAL STRATEGIES FAILED ❌❌❌');
-          console.error('=== FORENSIC DEBUG: First 1000 chars of document.body.innerText ===');
-          console.error(fullPageText.substring(0, 1000));
-          console.error('=== END FORENSIC DEBUG ===');
-          return '';
+          // CANDIDATE SOURCE 2: Markdown Code Blocks (ALL matches)
+          console.log('Global Source 2: Scanning for markdown code blocks...');
+          const globalMarkdownRegex = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/gi;
+          let globalMarkdownMatch;
+          while ((globalMarkdownMatch = globalMarkdownRegex.exec(fullPageText)) !== null) {
+            const content = globalMarkdownMatch[1].trim();
+            if (content.length > 0) {
+              globalCandidates.push(content);
+              console.log(`  Found global markdown candidate: ${content.length} chars`);
+            }
+          }
+
+          // CANDIDATE SOURCE 3: Brute Force
+          console.log('Global Source 3: Brute force extraction...');
+          const globalFirstOpen = fullPageText.indexOf('{');
+          const globalLastClose = fullPageText.lastIndexOf('}');
+          if (globalFirstOpen !== -1 && globalLastClose !== -1 && globalLastClose > globalFirstOpen) {
+            const content = fullPageText.substring(globalFirstOpen, globalLastClose + 1);
+            if (content.length > 0) {
+              globalCandidates.push(content);
+              console.log(`  Found global brute force candidate: ${content.length} chars`);
+            }
+          }
+
+          console.log(`Total global candidates collected: ${globalCandidates.length}`);
+
+          // FILTER: Remove anything smaller than 2000 chars
+          const globalSubstantialCandidates = globalCandidates.filter(c => c.length >= MIN_SUBSTANTIAL_JSON_LENGTH);
+          console.log(`After filtering (>= ${MIN_SUBSTANTIAL_JSON_LENGTH} chars): ${globalSubstantialCandidates.length} candidates`);
+
+          if (globalSubstantialCandidates.length === 0) {
+            console.error('❌ NO SUBSTANTIAL GLOBAL CANDIDATES FOUND');
+            console.error(`All ${globalCandidates.length} candidates were too small`);
+            console.error('Candidate sizes:', globalCandidates.map(c => c.length));
+            console.error('=== FORENSIC DEBUG: First 1000 chars ===');
+            console.error(fullPageText.substring(0, 1000));
+            return '';
+          }
+
+          // SORT: Longest first
+          globalSubstantialCandidates.sort((a, b) => b.length - a.length);
+
+          // SELECT: Return the longest
+          const globalLongestMatch = globalSubstantialCandidates[0];
+          console.log(`✅✅✅ GLOBAL LONGEST MATCH WINS ✅✅✅`);
+          console.log(`Selected: ${globalLongestMatch.length} chars (from ${globalSubstantialCandidates.length} substantial candidates)`);
+          return globalLongestMatch;
         }
 
         // Step 3: Select the ABSOLUTE LAST element from filtered list (most recent model response)
@@ -1398,76 +1416,77 @@ export class GeminiScraper {
         console.log(`Step 4: Extracted innerText from LAST MODEL bubble: ${fullText.length} characters`);
         console.log(`Step 4b: First 200 chars of extracted text: ${fullText.substring(0, 200)}`);
 
-        // ===== 3-STAGE FALLBACK EXTRACTION SYSTEM =====
-        const MIN_VALID_JSON_LENGTH = 500;
-        let jsonString: string | null = null;
+        // ===== LONGEST MATCH WINS STRATEGY =====
+        // Collect ALL possible JSON candidates, filter by size, return the longest
+        const MIN_SUBSTANTIAL_JSON_LENGTH = 2000; // Real data is 15k+, schema is only 900 chars
+        const candidates: string[] = [];
 
-        // STRATEGY 1: Strict Custom Delimiters (Best Case)
-        console.log('Strategy 1: Attempting strict custom delimiters (<<<JSON_START>>> ... <<<JSON_END>>>)');
-        const delimiterRegex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/;
-        const delimiterMatch = fullText.match(delimiterRegex);
+        console.log('=== COLLECTING ALL JSON CANDIDATES ===');
 
-        if (delimiterMatch && delimiterMatch[1] && delimiterMatch[1].trim().length > MIN_VALID_JSON_LENGTH) {
-          jsonString = delimiterMatch[1].trim();
-          console.log(`✅ Strategy 1 SUCCESS: Found JSON with custom delimiters (${jsonString.length} chars)`);
-        } else if (delimiterMatch) {
-          console.warn(`⚠️ Strategy 1 found delimiters but content too short (${delimiterMatch[1]?.trim().length || 0} chars) - trying next strategy`);
-        } else {
-          console.warn(`⚠️ Strategy 1 FAILED: No custom delimiters found - trying next strategy`);
-        }
-
-        // STRATEGY 2: Markdown Code Blocks (Common Case)
-        if (!jsonString) {
-          console.log('Strategy 2: Attempting markdown code blocks (```json ... ```)');
-          const markdownRegex = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/i;
-          const markdownMatch = fullText.match(markdownRegex);
-
-          if (markdownMatch && markdownMatch[1] && markdownMatch[1].trim().length > MIN_VALID_JSON_LENGTH) {
-            jsonString = markdownMatch[1].trim();
-            console.log(`✅ Strategy 2 SUCCESS: Found JSON in markdown code block (${jsonString.length} chars)`);
-          } else if (markdownMatch) {
-            console.warn(`⚠️ Strategy 2 found code block but content too short (${markdownMatch[1]?.trim().length || 0} chars) - trying next strategy`);
-          } else {
-            console.warn(`⚠️ Strategy 2 FAILED: No markdown code blocks found - trying next strategy`);
+        // CANDIDATE SOURCE 1: Custom Delimiters (find ALL matches, not just first)
+        console.log('Source 1: Scanning for custom delimiter matches...');
+        const delimiterRegex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/g;
+        let delimiterMatch;
+        while ((delimiterMatch = delimiterRegex.exec(fullText)) !== null) {
+          const content = delimiterMatch[1].trim();
+          if (content.length > 0) {
+            candidates.push(content);
+            console.log(`  Found delimiter candidate: ${content.length} chars`);
           }
         }
 
-        // STRATEGY 3: Brute Force Object Discovery (Handles "JSON { ... }" format)
-        if (!jsonString) {
-          console.log('Strategy 3: Brute force extraction (first { to last })');
-          const firstOpen = fullText.indexOf('{');
-          const lastClose = fullText.lastIndexOf('}');
-
-          if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
-            const candidate = fullText.substring(firstOpen, lastClose + 1);
-
-            // VALIDATION: Only accept if it looks like a substantial payload
-            if (candidate.length > MIN_VALID_JSON_LENGTH) {
-              jsonString = candidate;
-              console.log(`✅ Strategy 3 SUCCESS: Brute force extraction (${jsonString.length} chars)`);
-              console.log(`   Preview: ${candidate.substring(0, 100)}...`);
-            } else {
-              console.warn(`⚠️ Strategy 3 found braces but content too short (${candidate.length} chars)`);
-            }
-          } else {
-            console.error(`❌ Strategy 3 FAILED: Could not find valid { } pair`);
+        // CANDIDATE SOURCE 2: Markdown Code Blocks (find ALL matches)
+        console.log('Source 2: Scanning for markdown code blocks...');
+        const markdownRegex = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/gi;
+        let markdownMatch;
+        while ((markdownMatch = markdownRegex.exec(fullText)) !== null) {
+          const content = markdownMatch[1].trim();
+          if (content.length > 0) {
+            candidates.push(content);
+            console.log(`  Found markdown candidate: ${content.length} chars`);
           }
         }
 
-        // FINAL VALIDATION
-        if (!jsonString) {
-          console.error('❌❌❌ ALL STRATEGIES FAILED ❌❌❌');
-          console.error('=== FORENSIC DEBUG: First 1000 chars of lastBubble.innerText ===');
+        // CANDIDATE SOURCE 3: Brute Force (first { to last })
+        console.log('Source 3: Brute force extraction...');
+        const firstOpen = fullText.indexOf('{');
+        const lastClose = fullText.lastIndexOf('}');
+        if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+          const content = fullText.substring(firstOpen, lastClose + 1);
+          if (content.length > 0) {
+            candidates.push(content);
+            console.log(`  Found brute force candidate: ${content.length} chars`);
+          }
+        }
+
+        console.log(`Total candidates collected: ${candidates.length}`);
+
+        // FILTER: Remove anything smaller than 2000 chars (excludes prompt schema)
+        const substantialCandidates = candidates.filter(c => c.length >= MIN_SUBSTANTIAL_JSON_LENGTH);
+        console.log(`After filtering (>= ${MIN_SUBSTANTIAL_JSON_LENGTH} chars): ${substantialCandidates.length} candidates`);
+
+        if (substantialCandidates.length === 0) {
+          console.error('❌ NO SUBSTANTIAL CANDIDATES FOUND');
+          console.error(`All ${candidates.length} candidates were too small (< ${MIN_SUBSTANTIAL_JSON_LENGTH} chars)`);
+          console.error('Candidate sizes:', candidates.map(c => c.length));
+          console.error('=== FORENSIC DEBUG: First 1000 chars ===');
           console.error(fullText.substring(0, 1000));
-          console.error('=== END FORENSIC DEBUG ===');
-          throw new Error('No valid JSON payload (>500 chars) found using any extraction strategy');
+          throw new Error(`No JSON payload >= ${MIN_SUBSTANTIAL_JSON_LENGTH} chars found. Found ${candidates.length} small candidates.`);
         }
 
-        console.log(`✅✅✅ EXTRACTION SUCCESS ✅✅✅`);
-        console.log(`Final JSON length: ${jsonString.length} characters`);
-        console.log(`First 200 chars: ${jsonString.substring(0, 200)}`);
+        // SORT: Longest first
+        substantialCandidates.sort((a, b) => b.length - a.length);
 
-        return jsonString;
+        // SELECT: Return the longest
+        const longestMatch = substantialCandidates[0];
+        console.log(`✅✅✅ LONGEST MATCH WINS ✅✅✅`);
+        console.log(`Selected: ${longestMatch.length} chars (from ${substantialCandidates.length} substantial candidates)`);
+        if (substantialCandidates.length > 1) {
+          console.log(`Other candidates: ${substantialCandidates.slice(1).map(c => c.length + ' chars').join(', ')}`);
+        }
+        console.log(`First 200 chars: ${longestMatch.substring(0, 200)}`);
+
+        return longestMatch;
       });
 
       await this.log("✓ DOM evaluation completed successfully", 'success');
