@@ -1386,11 +1386,17 @@ export class GeminiScraper {
                 // Extract text
                 const text = await elementLocator.innerText();
 
-                // Check if this element contains JSON delimiters
-                if (text && text.includes('<<<JSON_START>>>') && text.length > 500) {
+                // Check if this element contains JSON (delimiters OR raw JSON)
+                // Accept if: has custom delimiters OR has JSON-like content ({ and })
+                const hasDelimiters = text.includes('<<<JSON_START>>>');
+                const hasJsonLike = text.includes('{') && text.includes('}');
+                const isSubstantial = text.length > 500;
+
+                if (text && (hasDelimiters || hasJsonLike) && isSubstantial) {
                   fullText = text;
                   usedLocator = `${selector} (element ${i + 1}/${count})`;
-                  await this.log(`✅ Found valid response at locator "${selector}" (${i + 1}/${count})`, 'success');
+                  const matchType = hasDelimiters ? 'with delimiters' : 'raw JSON';
+                  await this.log(`✅ Found valid response at locator "${selector}" (${i + 1}/${count}) - ${matchType}`, 'success');
                   await this.log(`   Text length: ${text.length} chars`, 'success');
                   break;
                 }
@@ -1430,9 +1436,16 @@ export class GeminiScraper {
         await this.log("⚠️ Attempting fallback to full page text (may include sidebar)", 'warning');
         fullText = await this.page.evaluate(() => document.body.innerText);
 
-        if (!fullText || !fullText.includes('<<<JSON_START>>>')) {
-          throw new Error('Could not locate response container with JSON delimiters. Shadow DOM extraction failed and no valid text found on page.');
+        // Check if fallback text contains JSON (delimiters OR raw JSON)
+        const hasFallbackDelimiters = fullText.includes('<<<JSON_START>>>');
+        const hasFallbackJson = fullText.includes('{') && fullText.includes('}');
+
+        if (!fullText || (!hasFallbackDelimiters && !hasFallbackJson)) {
+          throw new Error('Could not locate response container with JSON content. Shadow DOM extraction failed and no valid JSON found on page.');
         }
+
+        const fallbackMatchType = hasFallbackDelimiters ? 'with delimiters' : 'raw JSON';
+        await this.log(`⚠️ Using fallback text (${fallbackMatchType})`, 'warning');
 
         usedLocator = 'document.body (fallback)';
       }
