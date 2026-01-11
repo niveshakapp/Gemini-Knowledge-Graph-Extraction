@@ -28,6 +28,7 @@ export interface IStorage {
 
   // Queue
   getQueue(): Promise<QueueItem[]>;
+  getQueueItemById(id: number): Promise<QueueItem | undefined>;
   getPendingQueueItem(): Promise<QueueItem | undefined>;
   getPendingQueueItems(limit: number): Promise<QueueItem[]>;
   createQueueItem(item: InsertQueue): Promise<QueueItem>;
@@ -150,6 +151,14 @@ export class DatabaseStorage implements IStorage {
 
   async getQueue(): Promise<QueueItem[]> {
     return await db.select().from(extractionQueue).orderBy(desc(extractionQueue.priority), desc(extractionQueue.createdAt));
+  }
+
+  async getQueueItemById(id: number): Promise<QueueItem | undefined> {
+    const [item] = await db.select()
+      .from(extractionQueue)
+      .where(eq(extractionQueue.id, id))
+      .limit(1);
+    return item;
   }
 
   async getPendingQueueItem(): Promise<QueueItem | undefined> {

@@ -359,10 +359,54 @@ export async function registerRoutes(
     res.json({ status: action === 'start' ? 'processing' : 'stopped' });
   });
 
-  // Delete queue item
+  // Cancel a running task
+  app.post('/api/queue/:id/cancel', requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const success = await queueProcessor.cancelTask(id);
+
+      if (success) {
+        await storage.createLog({
+          logLevel: 'info',
+          logMessage: `Task cancelled (ID: ${id})`
+        });
+        res.json({ message: 'Task cancelled successfully', cancelled: true });
+      } else {
+        res.json({ message: 'Task not currently running', cancelled: false });
+      }
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Force delete a task (even if processing)
+  app.delete('/api/queue/:id/force', requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      await queueProcessor.forceDeleteTask(id);
+      await storage.createLog({
+        logLevel: 'warning',
+        logMessage: `Task force deleted (ID: ${id})`
+      });
+      res.json({ message: 'Task force deleted successfully' });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Delete queue item (regular delete - for queued/failed only)
   app.delete('/api/queue/:id', requireAuth, async (req, res) => {
     try {
       const id = Number(req.params.id);
+      const task = await storage.getQueueItemById(id);
+
+      // Prevent deleting processing tasks without force flag
+      if (task && task.status === 'processing') {
+        return res.status(400).json({
+          message: 'Cannot delete processing task. Use cancel or force delete instead.'
+        });
+      }
+
       await storage.deleteQueueItem(id);
       await storage.createLog({
         logLevel: 'info',

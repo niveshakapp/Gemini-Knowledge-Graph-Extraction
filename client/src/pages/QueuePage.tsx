@@ -1,7 +1,7 @@
 import { useQueue } from "@/hooks/use-dashboard-data";
 import { PageHeader } from "@/components/PageHeader";
 import { format } from "date-fns";
-import { Clock, CheckCircle, AlertCircle, Loader2, Edit2, Trash2, RefreshCw } from "lucide-react";
+import { Clock, CheckCircle, AlertCircle, Loader2, Edit2, Trash2, RefreshCw, XCircle, Trash } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -20,6 +20,8 @@ export default function QueuePage() {
         return <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/10 text-green-500 border border-green-500/20"><CheckCircle className="w-3 h-3" /> Completed</span>;
       case 'failed':
         return <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-500/10 text-red-500 border border-red-500/20"><AlertCircle className="w-3 h-3" /> Failed</span>;
+      case 'cancelled':
+        return <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-500/10 text-gray-500 border border-gray-500/20"><XCircle className="w-3 h-3" /> Cancelled</span>;
       default:
         return <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-500/10 text-yellow-500 border border-yellow-500/20"><Clock className="w-3 h-3" /> Queued</span>;
     }
@@ -53,6 +55,41 @@ export default function QueuePage() {
         const res = await fetch(`/api/queue/${id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error('Failed to delete task');
         toast({ title: "Task Removed", description: "Task has been removed from queue" });
+        // Refresh queue data
+        window.location.reload();
+      } catch (err: any) {
+        toast({ title: "Error", description: err.message, variant: "destructive" });
+      }
+    }
+  };
+
+  const handleCancel = async (id: number) => {
+    if (confirm("Are you sure you want to cancel this running task?")) {
+      try {
+        const res = await fetch(`/api/queue/${id}/cancel`, { method: 'POST' });
+        if (!res.ok) throw new Error('Failed to cancel task');
+        const data = await res.json();
+        toast({
+          title: "Task Cancelled",
+          description: data.message
+        });
+        // Refresh queue data
+        window.location.reload();
+      } catch (err: any) {
+        toast({ title: "Error", description: err.message, variant: "destructive" });
+      }
+    }
+  };
+
+  const handleForceDelete = async (id: number) => {
+    if (confirm("⚠️ WARNING: This will force stop and delete the running task. Are you sure?")) {
+      try {
+        const res = await fetch(`/api/queue/${id}/force`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Failed to force delete task');
+        toast({
+          title: "Task Force Deleted",
+          description: "Task has been stopped and removed"
+        });
         // Refresh queue data
         window.location.reload();
       } catch (err: any) {
@@ -171,7 +208,25 @@ export default function QueuePage() {
                             <Edit2 className="w-4 h-4" />
                           </button>
                         )}
-                        {(item.status === 'queued' || item.status === 'failed') && (
+                        {item.status === 'processing' && (
+                          <>
+                            <button
+                              onClick={() => handleCancel(item.id)}
+                              className="text-muted-foreground hover:text-orange-500 transition-colors"
+                              title="Cancel running task"
+                            >
+                              <XCircle className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleForceDelete(item.id)}
+                              className="text-muted-foreground hover:text-destructive transition-colors"
+                              title="Force delete running task"
+                            >
+                              <Trash className="w-4 h-4" />
+                            </button>
+                          </>
+                        )}
+                        {(item.status === 'queued' || item.status === 'failed' || item.status === 'cancelled') && (
                           <button
                             onClick={() => handleDelete(item.id)}
                             className="text-muted-foreground hover:text-destructive transition-colors"

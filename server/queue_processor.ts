@@ -4,6 +4,8 @@ import { GeminiScraper } from "./gemini_scraper";
 class QueueProcessor {
   private isRunning: boolean = false;
   private runningTasks: Map<number, Promise<void>> = new Map();
+  private runningScrapers: Map<number, GeminiScraper> = new Map(); // Track scrapers for cancellation
+  private cancelledTasks: Set<number> = new Set(); // Track which tasks should be cancelled
 
   async start() {
     if (this.isRunning) return;
@@ -19,6 +21,72 @@ class QueueProcessor {
     // Wait for all running tasks to complete
     await Promise.all(Array.from(this.runningTasks.values()));
     console.log("Queue processor stopped");
+  }
+
+  /**
+   * Cancel a specific running task
+   */
+  async cancelTask(taskId: number): Promise<boolean> {
+    console.log(`Attempting to cancel task ${taskId}...`);
+
+    // Add to cancelled set
+    this.cancelledTasks.add(taskId);
+
+    // If task is currently running, close its scraper
+    const scraper = this.runningScrapers.get(taskId);
+    if (scraper) {
+      console.log(`Task ${taskId} is running, closing scraper...`);
+      try {
+        await scraper.close();
+        console.log(`Scraper closed for task ${taskId}`);
+      } catch (err) {
+        console.error(`Error closing scraper for task ${taskId}:`, err);
+      }
+
+      // Update task status to cancelled
+      await storage.updateQueueItem(taskId, {
+        status: 'cancelled',
+        errorMessage: 'Task cancelled by user'
+      });
+
+      return true;
+    }
+
+    // If not running, just update status
+    const task = await storage.getQueueItemById(taskId);
+    if (task && task.status === 'processing') {
+      await storage.updateQueueItem(taskId, {
+        status: 'cancelled',
+        errorMessage: 'Task cancelled by user'
+      });
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Force delete a task (even if it's running)
+   */
+  async forceDeleteTask(taskId: number): Promise<void> {
+    console.log(`Force deleting task ${taskId}...`);
+
+    // First cancel if running
+    await this.cancelTask(taskId);
+
+    // Wait a bit for cancellation to complete
+    await new Promise(r => setTimeout(r, 1000));
+
+    // Then delete from database
+    await storage.deleteQueueItem(taskId);
+    console.log(`Task ${taskId} deleted`);
+  }
+
+  /**
+   * Check if a task has been cancelled
+   */
+  private isTaskCancelled(taskId: number): boolean {
+    return this.cancelledTasks.has(taskId);
   }
 
   private async processLoop() {
@@ -73,6 +141,18 @@ class QueueProcessor {
     const scraper = new GeminiScraper(); // Create new scraper instance for this task
 
     try {
+      // Register scraper for potential cancellation
+      this.runningScrapers.set(task.id, scraper);
+
+      // Check if task was cancelled before we even started
+      if (this.isTaskCancelled(task.id)) {
+        await storage.updateQueueItem(task.id, {
+          status: 'cancelled',
+          errorMessage: 'Task cancelled before processing started'
+        });
+        return;
+      }
+
       // Mark processing
       await storage.updateQueueItem(task.id, {
         status: 'processing',
@@ -193,7 +273,16 @@ class QueueProcessor {
         metadata: logMetadata
       });
     } finally {
-      await scraper.close();
+      // Clean up scraper registration
+      this.runningScrapers.delete(task.id);
+      this.cancelledTasks.delete(task.id);
+
+      // Always close scraper to free resources
+      try {
+        await scraper.close();
+      } catch (err) {
+        console.error(`Error closing scraper for task ${task.id}:`, err);
+      }
     }
   }
 }
