@@ -1725,200 +1725,101 @@ export class GeminiScraper {
       await this.log(`✅ Extracted text length: ${fullText.length} characters`, 'success');
       await this.log(`📄 First 200 chars: ${fullText.substring(0, 200)}`, 'info');
 
-      // ===== ROBUST EXTRACTION STRATEGY =====
-      // Handles cases where prompt and response are mixed in the same blob
-      await this.log("🔍 Running robust JSON extraction with intelligent filtering...", 'info');
-
       // 1. PRE-PROCESS: Decode HTML Entities (Fixes &lt;&lt;&lt;JSON_START&gt;&gt;&gt;)
       fullText = fullText.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
-      await this.log(`🔧 Decoded HTML entities`, 'info');
+
+      await this.log(`🔍 Processing text (${fullText.length} chars)...`, 'info');
 
       const candidates: string[] = [];
 
       // 2. EXTRACTION STRATEGY A: Strict Delimiters (The Cleanest Way)
       // We look for the LAST occurrence of the delimiters to avoid the User Prompt
-      await this.log("  Strategy A: Looking for LAST occurrence of custom delimiters...", 'info');
       const startTag = "<<<JSON_START>>>";
       const endTag = "<<<JSON_END>>>";
       const lastStartIndex = fullText.lastIndexOf(startTag); // key: LAST index
 
       if (lastStartIndex !== -1) {
-        const sectionAfterStart = fullText.substring(lastStartIndex + startTag.length);
-        const endIndex = sectionAfterStart.indexOf(endTag);
-        if (endIndex !== -1) {
-          const cleanJson = sectionAfterStart.substring(0, endIndex).trim();
-          candidates.push(cleanJson);
-          await this.log(`    ✅ Found Strict Delimiter Match: ${cleanJson.length} chars (using LAST occurrence)`, 'success');
-        }
+          const sectionAfterStart = fullText.substring(lastStartIndex + startTag.length);
+          const endIndex = sectionAfterStart.indexOf(endTag);
+          if (endIndex !== -1) {
+              const cleanJson = sectionAfterStart.substring(0, endIndex).trim();
+              candidates.push(cleanJson);
+              await this.log(`✅ Found Strict Delimiter Match: ${cleanJson.length} chars`, 'success');
+          }
       }
 
       // 3. EXTRACTION STRATEGY B: Markdown Blocks (Backup)
-      await this.log("  Strategy B: Scanning for markdown code blocks...", 'info');
       const markdownRegex = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/gi;
       let match;
       while ((match = markdownRegex.exec(fullText)) !== null) {
-        candidates.push(match[1].trim());
-        await this.log(`    Found markdown candidate: ${match[1].trim().length} chars`, 'info');
+          candidates.push(match[1].trim());
       }
 
       // 4. EXTRACTION STRATEGY C: Brute Force (The Safety Net)
       // Find the largest outer-most JSON object
-      await this.log("  Strategy C: Brute force extraction (first { to last })...", 'info');
       const firstOpen = fullText.indexOf('{');
       const lastClose = fullText.lastIndexOf('}');
       if (firstOpen !== -1 && lastClose > firstOpen) {
-        const bruteCandidate = fullText.substring(firstOpen, lastClose + 1);
-        candidates.push(bruteCandidate);
-        await this.log(`    Found brute force candidate: ${bruteCandidate.length} chars`, 'info');
+          const bruteCandidate = fullText.substring(firstOpen, lastClose + 1);
+          candidates.push(bruteCandidate);
       }
 
-      await this.log(`Total candidates collected: ${candidates.length}`, 'info');
-
       // 5. INTELLIGENT SELECTION & CLEANUP
-      await this.log("🧠 Applying intelligent filtering and cleanup...", 'info');
       let bestJson = "";
       let maxScore = 0;
 
-      for (let i = 0; i < candidates.length; i++) {
-        const candidate = candidates[i];
+      for (const candidate of candidates) {
+          // A. Filter out tiny fragments
+          if (candidate.length < 100) continue;
 
-        // A. Filter out tiny fragments
-        if (candidate.length < 100) {
-          await this.log(`  Candidate ${i + 1}: Too small (${candidate.length} chars) - skipping`, 'info');
-          continue;
-        }
-
-        // B. Detect "Prompt Schema" (The Empty JSON in your instructions)
-        // If it contains empty placeholders AND is small, it's the prompt.
-        const isSchema = (candidate.includes('"extraction_metadata": {}') || candidate.includes('"company_identity": {}'));
-        if (isSchema && candidate.length < 5000) {
-          await this.log(`  ⚠️ Candidate ${i + 1}: Prompt Schema detected (${candidate.length} chars) - skipping`, 'warning');
-          continue;
-        }
-
-        // C. "Messy Blob" Cleanup
-        // If we have a massive candidate (20k+) that mistakenly includes the prompt,
-        // we need to find the REAL start. The real data typically starts with "extraction_metadata": { "document_sources"
-        let processedCandidate = candidate;
-        if (candidate.length > 20000 && isSchema) {
-          // This blob has BOTH prompt and response. Find the split.
-          // Look for the second occurrence of "extraction_metadata"
-          await this.log(`  🔧 Candidate ${i + 1}: Mixed blob detected (${candidate.length} chars) - attempting surgical separation...`, 'warning');
-
-          const firstKeyIndex = candidate.indexOf('"extraction_metadata"');
-          const secondKeyIndex = candidate.indexOf('"extraction_metadata"', firstKeyIndex + 1);
-
-          if (secondKeyIndex !== -1) {
-            // Find the '{' immediately preceding the second occurrence
-            const realStart = candidate.lastIndexOf('{', secondKeyIndex);
-            if (realStart !== -1) {
-              processedCandidate = candidate.substring(realStart);
-              await this.log(`    ✂️ Surgically removed prompt text from blob. New size: ${processedCandidate.length} chars`, 'success');
-            }
-          } else {
-            // Only one "extraction_metadata" found - if it's populated, it's the real data
-            if (!candidate.includes('"extraction_metadata": {}')) {
-              await this.log(`    ✅ Single extraction_metadata found with data - this is the real response`, 'success');
-            }
+          // B. Detect "Prompt Schema" (The Empty JSON in your instructions)
+          const isSchema = (candidate.includes('"extraction_metadata": {}') || candidate.includes('"company_identity": {}'));
+          
+          // If it contains empty placeholders AND is small (< 5000 chars), it's definitely just the prompt.
+          if (isSchema && candidate.length < 5000) {
+              await this.log(`⚠️ Ignoring candidate (${candidate.length} chars) - Prompt Schema detected.`, 'warning');
+              continue;
           }
-        }
 
-        // D. Score based on length (longer is usually better for KG)
-        if (processedCandidate.length > maxScore) {
-          maxScore = processedCandidate.length;
-          bestJson = processedCandidate;
-          await this.log(`  ✅ Candidate ${i + 1}: New best candidate (${processedCandidate.length} chars)`, 'success');
-        }
+          // C. "Messy Blob" Cleanup (THE CRITICAL FIX)
+          // If we have a massive candidate (20k+) that mistakenly includes the prompt schema,
+          // we need to find the REAL start. The real data will have a SECOND "extraction_metadata" key.
+          let processedCandidate = candidate;
+          if (candidate.length > 20000 && isSchema) {
+             // Look for the second occurrence of "extraction_metadata"
+             const firstKeyIndex = candidate.indexOf('"extraction_metadata"');
+             const secondKeyIndex = candidate.indexOf('"extraction_metadata"', firstKeyIndex + 1);
+             
+             if (secondKeyIndex !== -1) {
+                 // Find the '{' immediately preceding the second occurrence
+                 const realStart = candidate.lastIndexOf('{', secondKeyIndex);
+                 if (realStart !== -1) {
+                     processedCandidate = candidate.substring(realStart);
+                     await this.log(`✂️ Surgically removed prompt text from blob. New size: ${processedCandidate.length}`, 'success');
+                 }
+             }
+          }
+
+          // Score based on length (longer is usually better for KG)
+          if (processedCandidate.length > maxScore) {
+              maxScore = processedCandidate.length;
+              bestJson = processedCandidate;
+          }
       }
 
       if (!bestJson) {
-        await this.log(`❌ NO VALID JSON CANDIDATES FOUND`, 'error');
-        await this.log(`All ${candidates.length} candidates were filtered out`, 'error');
-        await this.log(`Candidate sizes: ${candidates.map(c => c.length).join(', ')}`, 'error');
-        await this.log(`=== FORENSIC DEBUG: First 1000 chars ===`, 'error');
-        await this.log(fullText.substring(0, 1000), 'error');
-        throw new Error("No valid JSON candidates found after filtering.");
+          throw new Error("No valid JSON candidates found after filtering.");
       }
 
-      const responseText = bestJson;
-      await this.log(`✅✅✅ FINAL SELECTION ✅✅✅`, 'success');
-      await this.log(`Selected: ${responseText.length} chars`, 'success');
-      await this.log(`First 200 chars: ${responseText.substring(0, 200)}`, 'info');
+      await this.log(`✅ Final Selection: ${bestJson.length} chars`, 'success');
 
-      await this.log("✓ Robust extraction completed successfully", 'success');
-
-      // Validate we have substantial response text
-      if (!responseText || responseText.length < 10) {
-        await this.log(`❌ CRITICAL: Extraction returned empty or very short response (${responseText?.length || 0} chars)`, 'error');
-        throw new Error(`Extraction failed: response too short (${responseText?.length || 0} chars)`);
-      }
-
-      await this.log(`✓ Final extracted JSON ready (${responseText.length} characters)`, 'success');
-
-      // Old validation block removed - we now validate earlier in the extraction process
-      // The new Playwright locator logic already handles all error cases
-
-      // Skip old forensic fallback - keeping code below for compatibility
-      if (false) {  // This block is disabled but preserved for reference
-        await this.log("❌ CRITICAL: JSON delimiters not found in response", 'error');
-        await this.log("💡 Attempting to capture full raw response for debugging...", 'info');
-
-        // FALLBACK: Capture entire response text for debugging
-        const rawResponse = await this.page.evaluate(() => {
-          // Try to get the last model response by various selectors
-          const selectors = [
-            '.model-response-text',
-            '[data-message-author-role="model"]',
-            '.message-content',
-            'message-content',
-            '.response-container',
-            '.conversation-turn'
-          ];
-
-          for (const selector of selectors) {
-            const elements = Array.from(document.querySelectorAll(selector));
-            if (elements.length > 0) {
-              // Get the last element (most recent response)
-              const lastElement = elements[elements.length - 1] as HTMLElement;
-              const text = lastElement.innerText || lastElement.textContent || '';
-              if (text.length > 100) {
-                return {
-                  text: text,
-                  selector: selector,
-                  length: text.length
-                };
-              }
-            }
-          }
-
-          // Ultimate fallback: get entire page text
-          return {
-            text: document.body.innerText,
-            selector: 'document.body',
-            length: document.body.innerText.length
-          };
-        });
-
-        await this.log(`📄 Captured raw response: ${rawResponse.length} chars using selector: ${rawResponse.selector}`, 'info');
-        await this.log(`📄 Raw response preview: ${rawResponse.text.substring(0, 500)}...`, 'info');
-
-        // Create error object with raw response attached
-        const error: any = new Error("Scraper Error: JSON delimiters not found in response. Check logs for forensic debug info.");
-        error.rawResponse = rawResponse.text;
-        error.rawResponseLength = rawResponse.length;
-        throw error;
-      }
-
-      await this.log(`✅ Raw JSON extracted (${responseText.length} characters)`, 'success');
-      await this.log(`📊 JSON Preview: ${responseText.substring(0, 150)}...`, 'info');
-
-      // ALWAYS use raw JSON - NEVER parse into knowledge graph format
+      // 6. PARSING
       await this.log("🔍 Parsing JSON with repair strategy...", 'info');
       let knowledgeGraph: any;
 
       try {
         // Attempt 1: Standard Parse (Fastest - no overhead)
-        knowledgeGraph = JSON.parse(responseText);
+        knowledgeGraph = JSON.parse(bestJson);
         await this.log("✅ JSON parsed successfully with standard parser", 'success');
       } catch (e1: any) {
         await this.log(`⚠️ Standard parse failed: ${e1.message}`, 'warning');
@@ -1926,7 +1827,7 @@ export class GeminiScraper {
 
         try {
           // Attempt 2: Auto-Repair (Fixes commas, quotes, trailing commas, etc.)
-          const repairedJson = jsonrepair(responseText);
+          const repairedJson = jsonrepair(bestJson);
           knowledgeGraph = JSON.parse(repairedJson);
           await this.log("✅ JSON successfully repaired and parsed!", 'success');
           await this.log(`🔧 Repair fixed: ${e1.message}`, 'info');
@@ -1934,8 +1835,8 @@ export class GeminiScraper {
           // Both standard and repair failed - log forensic info and throw
           await this.log(`❌ CRITICAL: Standard parse failed: ${e1.message}`, 'error');
           await this.log(`❌ CRITICAL: Repair also failed: ${e2.message}`, 'error');
-          await this.log(`📄 First 500 chars of invalid JSON: ${responseText.substring(0, 500)}`, 'error');
-          await this.log(`📄 Last 500 chars of invalid JSON: ${responseText.substring(responseText.length - 500)}`, 'error');
+          await this.log(`📄 First 500 chars of invalid JSON: ${bestJson.substring(0, 500)}`, 'error');
+          await this.log(`📄 Last 500 chars of invalid JSON: ${bestJson.substring(bestJson.length - 500)}`, 'error');
           throw new Error(`JSON Parse Failed: ${e1.message} | Repair Failed: ${e2.message}`);
         }
       }
