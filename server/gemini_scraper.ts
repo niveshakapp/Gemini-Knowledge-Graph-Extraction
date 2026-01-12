@@ -1725,105 +1725,127 @@ export class GeminiScraper {
       await this.log(`✅ Extracted text length: ${fullText.length} characters`, 'success');
       await this.log(`📄 First 200 chars: ${fullText.substring(0, 200)}`, 'info');
 
-      // ===== LONGEST MATCH WINS STRATEGY =====
-      // Extract JSON from the fullText using regex and select the longest match
-      await this.log("🔍 Running JSON extraction with 'Longest Match Wins' strategy...", 'info');
+      // ===== ROBUST EXTRACTION STRATEGY =====
+      // Handles cases where prompt and response are mixed in the same blob
+      await this.log("🔍 Running robust JSON extraction with intelligent filtering...", 'info');
 
-      const MIN_SUBSTANTIAL_JSON_LENGTH = 2000; // Real data is 15k+, schema is only 900 chars
+      // 1. PRE-PROCESS: Decode HTML Entities (Fixes &lt;&lt;&lt;JSON_START&gt;&gt;&gt;)
+      fullText = fullText.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+      await this.log(`🔧 Decoded HTML entities`, 'info');
+
       const candidates: string[] = [];
 
-      // CANDIDATE SOURCE 1: Custom Delimiters (find ALL matches, not just first)
-      await this.log("  Source 1: Scanning for custom delimiter matches...", 'info');
-      const delimiterRegex = /<<<JSON_START>>>([\s\S]*?)<<<JSON_END>>>/g;
-      let delimiterMatch;
-      while ((delimiterMatch = delimiterRegex.exec(fullText)) !== null) {
-        const content = delimiterMatch[1].trim();
-        if (content.length > 0) {
-          candidates.push(content);
-          await this.log(`    Found delimiter candidate: ${content.length} chars`, 'info');
+      // 2. EXTRACTION STRATEGY A: Strict Delimiters (The Cleanest Way)
+      // We look for the LAST occurrence of the delimiters to avoid the User Prompt
+      await this.log("  Strategy A: Looking for LAST occurrence of custom delimiters...", 'info');
+      const startTag = "<<<JSON_START>>>";
+      const endTag = "<<<JSON_END>>>";
+      const lastStartIndex = fullText.lastIndexOf(startTag); // key: LAST index
+
+      if (lastStartIndex !== -1) {
+        const sectionAfterStart = fullText.substring(lastStartIndex + startTag.length);
+        const endIndex = sectionAfterStart.indexOf(endTag);
+        if (endIndex !== -1) {
+          const cleanJson = sectionAfterStart.substring(0, endIndex).trim();
+          candidates.push(cleanJson);
+          await this.log(`    ✅ Found Strict Delimiter Match: ${cleanJson.length} chars (using LAST occurrence)`, 'success');
         }
       }
 
-      // CANDIDATE SOURCE 2: Markdown Code Blocks (find ALL matches)
-      await this.log("  Source 2: Scanning for markdown code blocks...", 'info');
+      // 3. EXTRACTION STRATEGY B: Markdown Blocks (Backup)
+      await this.log("  Strategy B: Scanning for markdown code blocks...", 'info');
       const markdownRegex = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/gi;
-      let markdownMatch;
-      while ((markdownMatch = markdownRegex.exec(fullText)) !== null) {
-        const content = markdownMatch[1].trim();
-        if (content.length > 0) {
-          candidates.push(content);
-          await this.log(`    Found markdown candidate: ${content.length} chars`, 'info');
-        }
+      let match;
+      while ((match = markdownRegex.exec(fullText)) !== null) {
+        candidates.push(match[1].trim());
+        await this.log(`    Found markdown candidate: ${match[1].trim().length} chars`, 'info');
       }
 
-      // CANDIDATE SOURCE 3: Brute Force (first { to last })
-      await this.log("  Source 3: Brute force extraction...", 'info');
+      // 4. EXTRACTION STRATEGY C: Brute Force (The Safety Net)
+      // Find the largest outer-most JSON object
+      await this.log("  Strategy C: Brute force extraction (first { to last })...", 'info');
       const firstOpen = fullText.indexOf('{');
       const lastClose = fullText.lastIndexOf('}');
-      if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
-        const content = fullText.substring(firstOpen, lastClose + 1);
-        if (content.length > 0) {
-          candidates.push(content);
-          await this.log(`    Found brute force candidate: ${content.length} chars`, 'info');
-        }
+      if (firstOpen !== -1 && lastClose > firstOpen) {
+        const bruteCandidate = fullText.substring(firstOpen, lastClose + 1);
+        candidates.push(bruteCandidate);
+        await this.log(`    Found brute force candidate: ${bruteCandidate.length} chars`, 'info');
       }
 
       await this.log(`Total candidates collected: ${candidates.length}`, 'info');
 
-      // FILTER: Process candidates with multiple validation checks
-      const substantialCandidates: string[] = [];
+      // 5. INTELLIGENT SELECTION & CLEANUP
+      await this.log("🧠 Applying intelligent filtering and cleanup...", 'info');
+      let bestJson = "";
+      let maxScore = 0;
 
       for (let i = 0; i < candidates.length; i++) {
-        let candidate = candidates[i];
+        const candidate = candidates[i];
 
-        // CLEANUP: Remove markdown code block syntax if present
-        // (Gemini sometimes wraps the output in ```json ... ```)
-        const cleanCandidate = candidate.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
-
-        // FILTER 1: Reject the "Empty Schema" from the prompt
-        // The prompt schema contains empty objects like "extraction_metadata": {}
-        // The real data will have "extraction_metadata": { "document_sources": ... }
-        if (cleanCandidate.includes('"extraction_metadata": {}') ||
-            cleanCandidate.includes('"company_identity": {}')) {
-          await this.log(`⚠️ Ignoring candidate ${i + 1} (${cleanCandidate.length} chars) - It appears to be the Prompt Schema`, 'warning');
+        // A. Filter out tiny fragments
+        if (candidate.length < 100) {
+          await this.log(`  Candidate ${i + 1}: Too small (${candidate.length} chars) - skipping`, 'info');
           continue;
         }
 
-        // FILTER 2: Reject short candidates (less than minimum substantial length)
-        if (cleanCandidate.length < MIN_SUBSTANTIAL_JSON_LENGTH) {
-          await this.log(`  Candidate ${i + 1}: Too short (${cleanCandidate.length} chars)`, 'info');
+        // B. Detect "Prompt Schema" (The Empty JSON in your instructions)
+        // If it contains empty placeholders AND is small, it's the prompt.
+        const isSchema = (candidate.includes('"extraction_metadata": {}') || candidate.includes('"company_identity": {}'));
+        if (isSchema && candidate.length < 5000) {
+          await this.log(`  ⚠️ Candidate ${i + 1}: Prompt Schema detected (${candidate.length} chars) - skipping`, 'warning');
           continue;
         }
 
-        // If it passes all filters, add to valid candidates
-        substantialCandidates.push(cleanCandidate);
-        await this.log(`✅ Candidate ${i + 1}: Valid (${cleanCandidate.length} chars)`, 'success');
+        // C. "Messy Blob" Cleanup
+        // If we have a massive candidate (20k+) that mistakenly includes the prompt,
+        // we need to find the REAL start. The real data typically starts with "extraction_metadata": { "document_sources"
+        let processedCandidate = candidate;
+        if (candidate.length > 20000 && isSchema) {
+          // This blob has BOTH prompt and response. Find the split.
+          // Look for the second occurrence of "extraction_metadata"
+          await this.log(`  🔧 Candidate ${i + 1}: Mixed blob detected (${candidate.length} chars) - attempting surgical separation...`, 'warning');
+
+          const firstKeyIndex = candidate.indexOf('"extraction_metadata"');
+          const secondKeyIndex = candidate.indexOf('"extraction_metadata"', firstKeyIndex + 1);
+
+          if (secondKeyIndex !== -1) {
+            // Find the '{' immediately preceding the second occurrence
+            const realStart = candidate.lastIndexOf('{', secondKeyIndex);
+            if (realStart !== -1) {
+              processedCandidate = candidate.substring(realStart);
+              await this.log(`    ✂️ Surgically removed prompt text from blob. New size: ${processedCandidate.length} chars`, 'success');
+            }
+          } else {
+            // Only one "extraction_metadata" found - if it's populated, it's the real data
+            if (!candidate.includes('"extraction_metadata": {}')) {
+              await this.log(`    ✅ Single extraction_metadata found with data - this is the real response`, 'success');
+            }
+          }
+        }
+
+        // D. Score based on length (longer is usually better for KG)
+        if (processedCandidate.length > maxScore) {
+          maxScore = processedCandidate.length;
+          bestJson = processedCandidate;
+          await this.log(`  ✅ Candidate ${i + 1}: New best candidate (${processedCandidate.length} chars)`, 'success');
+        }
       }
 
-      await this.log(`After filtering (schema detection + size >= ${MIN_SUBSTANTIAL_JSON_LENGTH}): ${substantialCandidates.length} candidates`, 'info');
-
-      if (substantialCandidates.length === 0) {
-        await this.log(`❌ NO SUBSTANTIAL CANDIDATES FOUND`, 'error');
-        await this.log(`All ${candidates.length} candidates were too small (< ${MIN_SUBSTANTIAL_JSON_LENGTH} chars)`, 'error');
+      if (!bestJson) {
+        await this.log(`❌ NO VALID JSON CANDIDATES FOUND`, 'error');
+        await this.log(`All ${candidates.length} candidates were filtered out`, 'error');
         await this.log(`Candidate sizes: ${candidates.map(c => c.length).join(', ')}`, 'error');
         await this.log(`=== FORENSIC DEBUG: First 1000 chars ===`, 'error');
         await this.log(fullText.substring(0, 1000), 'error');
-        throw new Error(`No JSON payload >= ${MIN_SUBSTANTIAL_JSON_LENGTH} chars found. Found ${candidates.length} small candidates.`);
+        throw new Error("No valid JSON candidates found after filtering.");
       }
 
-      // SORT: Longest first
-      substantialCandidates.sort((a, b) => b.length - a.length);
-
-      // SELECT: Return the longest
-      const responseText = substantialCandidates[0];
-      await this.log(`✅✅✅ LONGEST MATCH WINS ✅✅✅`, 'success');
-      await this.log(`Selected: ${responseText.length} chars (from ${substantialCandidates.length} substantial candidates)`, 'success');
-      if (substantialCandidates.length > 1) {
-        await this.log(`Other candidates: ${substantialCandidates.slice(1).map(c => c.length + ' chars').join(', ')}`, 'info');
-      }
+      const responseText = bestJson;
+      await this.log(`✅✅✅ FINAL SELECTION ✅✅✅`, 'success');
+      await this.log(`Selected: ${responseText.length} chars`, 'success');
       await this.log(`First 200 chars: ${responseText.substring(0, 200)}`, 'info');
 
-      await this.log("✓ Shadow DOM extraction completed successfully", 'success');
+      await this.log("✓ Robust extraction completed successfully", 'success');
 
       // Validate we have substantial response text
       if (!responseText || responseText.length < 10) {
