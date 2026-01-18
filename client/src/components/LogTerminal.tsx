@@ -91,17 +91,37 @@ export function LogTerminal({ logs, height = "400px" }: LogTerminalProps) {
         {sortedLogs.length === 0 ? (
           <div className="text-muted-foreground italic opacity-50">Waiting for system activity...</div>
         ) : (
-          sortedLogs.map((log) => (
-            <div key={log.id} className="flex gap-3 hover:bg-white/5 p-0.5 rounded transition-colors">
-              <span className="text-muted-foreground/50 shrink-0 select-none">
-                {log.createdAt ? format(new Date(log.createdAt), 'HH:mm:ss.SSS') : '--:--:--'}
-              </span>
-              <span className={cn("font-bold uppercase w-16 shrink-0", getLogColor(log.logLevel))}>
-                [{log.logLevel || 'INFO'}]
-              </span>
-              <span className="text-gray-300 break-all">{log.logMessage}</span>
-            </div>
-          ))
+          sortedLogs.map((log) => {
+            // Check if this is a screenshot log
+            const screenshotMatch = log.logMessage?.match(/^(.+?)\|\|\|SCREENSHOT\|\|\|(.+)$/);
+            const isScreenshot = !!screenshotMatch;
+            const screenshotLabel = screenshotMatch?.[1] || '';
+            const screenshotData = screenshotMatch?.[2] || '';
+            
+            return (
+              <div key={log.id} className="flex gap-3 hover:bg-white/5 p-0.5 rounded transition-colors">
+                <span className="text-muted-foreground/50 shrink-0 select-none">
+                  {log.createdAt ? format(new Date(log.createdAt), 'HH:mm:ss.SSS') : '--:--:--'}
+                </span>
+                <span className={cn("font-bold uppercase w-16 shrink-0", getLogColor(log.logLevel))}>
+                  [{log.logLevel || 'INFO'}]
+                </span>
+                {isScreenshot ? (
+                  <div className="flex flex-col gap-2 flex-1">
+                    <span className="text-gray-300">{screenshotLabel}</span>
+                    <img 
+                      src={screenshotData} 
+                      alt="Browser screenshot" 
+                      className="rounded border border-white/10 max-w-full h-auto cursor-pointer hover:border-primary/50 transition-colors"
+                      onClick={(e) => window.open((e.target as HTMLImageElement).src, '_blank')}
+                    />
+                  </div>
+                ) : (
+                  <span className="text-gray-300 break-all">{log.logMessage}</span>
+                )}
+              </div>
+            );
+          })
         )}
         <div ref={endRef} />
         <div className="flex items-center gap-2 text-primary mt-2">

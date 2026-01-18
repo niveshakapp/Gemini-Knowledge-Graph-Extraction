@@ -5,6 +5,7 @@ import { Loader2, Send, Database, Building2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { defaultPrompt } from "@shared/constants";
 
 const GEMINI_MODELS = [
   { id: 'gemini-3-flash', name: 'Gemini 3 Fast', description: 'Answers quickly' },
@@ -16,12 +17,7 @@ export default function AddTask() {
   const [entityType, setEntityType] = useState<'Stock' | 'Industry'>('Stock');
   const [name, setName] = useState("");
   const [id, setId] = useState(""); // Simplified: User enters ID manually for now since we don't have lookup UI
-  const [prompt, setPrompt] = useState(`Extract a comprehensive Knowledge Graph for the given entity.
-Focus on:
-1. Key relationships
-2. Strategic partnerships
-3. Market positioning
-4. Recent developments`);
+  const [prompt, setPrompt] = useState(defaultPrompt);
   const [priority, setPriority] = useState(0);
   const [selectedModel, setSelectedModel] = useState('gemini-3-pro'); // Default to Gemini 3 Pro
 

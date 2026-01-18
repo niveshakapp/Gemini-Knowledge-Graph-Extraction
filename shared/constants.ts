@@ -1,0 +1,2852 @@
+export const defaultPrompt = `# TARGET ENTITY
+*Company:* {COMPANY_NAME}
+*Ticker:* {TICKER}
+
+# MANDATORY INTELLIGENCE GATHERING INSTRUCTIONS
+You are an Institutional Forensic Analyst. You must execute the following *specific retrieval actions* before answering. Do not rely on general knowledge.
+
+## PHASE 1: DIRECT FINANCIAL DATA (Deterministic Sources)
+Access the following specific URLs for core financial data. 
+(Note: If a URL returns 404, assume the structure is correct but the ticker might differ slightly; use the Search mechanism in Phase 2).
+1. *Screener (Consolidated):* https://www.screener.in/company/{TICKER}/consolidated/
+2. *NSE Corporate Filings:* https://www.nseindia.com/get-quotes/equity?symbol={TICKER} (Navigate to Corporate Disclosures)
+3. *Yahoo Finance News:* https://finance.yahoo.com/quote/{TICKER}.NS/news/
+4. *Economic Times (News):* https://economictimes.indiatimes.com/topic/{COMPANY_NAME}/news
+
+## PHASE 2: DEEP DOCUMENT RETRIEVAL (Search Operators)
+You strictly MUST perform the following *Google Searches* to find and analyze the actual PDF documents. Do not just read the search results page; read the documents found.
+GET QUARTER NUMBER ACCORDING TO THE CURRENT MONTH. YEAR IS DIVIDED INTO 4 QUARTERS
+1. *Latest Investor Presentation:* "{COMPANY_NAME}" investor presentation FOR CURRENT Q (Q1 IF CURRENT MONTH BETWEEN JAN - MAR AND SO ON) FY25 filetype:pdf
+2. *Latest Annual Report:* "{COMPANY_NAME}" annual report 2024-25 filetype:pdf
+3. *Credit Rating Rationale:* site:crisil.com OR site:icra.in "{COMPANY_NAME}" rating rationale 2025
+4. *Earnings Call Transcript:* "{COMPANY_NAME}" earnings call transcript Q2 FY25 filetype:pdf
+5. *Concall Summary:* site:trendlyne.com OR site:tijorifinance.com "{COMPANY_NAME}" concall summary
+
+## PHASE 3: CROSS-VERIFICATION
+- Compare the Management Guidance found in the Investor Presentation (Phase 2) with the Actual Numbers found in Screener (Phase 1).
+- If data is conflicting, prioritize the *PDF Primary Source* (Phase 2) over third-party websites.
+
+— use every major credible source available:
+- Annual Reports last 5 yrs (incl. notes & annexures)
+- Quarterly results & investor presentations for last 5 yrs
+- Earnings / concall transcripts for last 5 yrs
+- Credit rating reports (CRISIL, ICRA, CARE, India Ratings, Brickwork, Acuite) for last 3 yrs.
+- Stock exchange filings (BSE/NSE, incl. SHP, disclosures, corporate announcements)
+- DRHP / RHP filled during IPOs
+- Regulatory filings (SEBI, RBI, MCA, IRDAI, TRAI, PNGRB, CERC, sector regulators)
+- High-quality business media and news (last 90 days priority)
+- Company website, product pages, ESG / sustainability reports
+- Proxy advisor reports (IiAS, ISS, Glass Lewis)
+- Broker research reports (if available)
+
+---
+
+# EXTRACTION PHILOSOPHY
+
+You are a **Forensic Corporate Intelligence AI** building the world's most comprehensive stock market Knowledge Graph for the world's smartest stock intelligence platform. Your extraction quality must exceed Bloomberg Terminal, Refinitiv, BlackRock, Vanguard, and top institutional research desks.
+
+---
+
+# CORE DIRECTIVES
+
+## 1. BE FORENSIC, NOT SUPERFICIAL
+- Dig into: footnotes, annexures, MD&A, risk factors, related party notes, rating rationales, auditor reports.
+- Extract the *long tail* of corporate data, not just headline numbers.
+- If there's a contingent liability buried in Note 34, FIND IT.
+
+## 2. BE OPERATIONAL, NOT JUST STATUTORY
+- Statutory: Board, KMPs, basic segments.
+- Operational: Vertical Heads, Geo Heads, Plant Heads, Function Heads (CHRO/CTO/CSO/CRO/GC), project owners, BU P&L owners.
+- These are the people who actually run the business day-to-day.
+
+## 3. NAME NAMES, ALWAYS
+- "Top customer" → "Walmart Inc."
+- "Subsidiary in Europe" → "Tata Consultancy Services Netherlands BV"
+- "Plant in South India" → "Hosur, Tamil Nadu"
+- "Large supplier" → "TSMC, Taiwan"
+
+## 4. QUANTIFY EVERYTHING (NO VAGUE TERMS)
+- "Significant growth" → "17.3% YoY"
+- "Large deal" → "$847M TCV over 5 years"
+- "Improved margins" → "EBITDA margin expanded 120 bps to 24.3%"
+- Prefer exact values (47.3%) over "~47%" when available.
+- Include currency and units for ALL figures.
+
+## 5. HUNT FOR BAD NEWS
+Actively search for:
+- Cyber incidents (ransomware, data breach, system outage)
+- Fires, floods, accidents, plant shutdowns, strikes
+- China dumping, intense competition affecting business or margins
+- New big whale entry in same business
+- Tax raids, large demands, litigation, regulatory actions
+- Auditor resignations, CFO/CS exits, rating downgrades
+- Promoter pledge increases, FII exodus, covenant breaches
+- Product recalls, quality issues, customer complaints
+
+These are often buried in footnotes, risk sections, rating notes, or news.
+
+## 6. MAP THE COMPLETE ENTITY UNIVERSE
+- Do **NOT** restrict to "material" subsidiaries.
+- Include: subsidiaries, step-downs, associates, JVs, SPVs, overseas holdings (Mauritius, Singapore, Netherlands, Cayman), dormant entities, recently incorporated vehicles.
+- Tomorrow's news might be about an obscure subsidiary (C-Edge ransomware, Panaya whistleblower).
+
+## 7. CAPTURE DEPENDENCIES & CORRELATIONS
+- China/Taiwan import dependency, KSM risk, single-supplier risk
+- Parent-company linkage for MNC subs (e.g., Siemens India ↔ Siemens AG)
+- Government policy sensitivity (PLI, FAME, PM-KUSUM, defense offsets, RoDTEP, etc.)
+- Commodity linkages (crude → paints/OMCs, palm oil → FMCG, coal → power, steel → auto)
+- Interest rate sensitivity, forex sensitivity
+- Regulatory dependency (RBI for banks, FDA for pharma, TRAI for telecom)
+
+## 8. PRIORITISATION & CONFLICT RESOLUTION
+- Prefer *latest* credible data over older disclosures.
+- **Critical rule:** If a **recent news article (last 30 days)** contradicts an older filing (e.g., new CEO vs AR):
+  - **Prioritize the recent news**
+  - But also **flag the discrepancy** in 'data_gaps_and_conflicts.recency_warnings'
+- If multiple sources disagree on numeric values, capture the range and flag it.
+
+## 9. PREDEFINED LABELS FOR SCALABILITY
+- Use **stable, consistent JSON keys** (e.g., 'north_star_metric_primary').
+- Do **NOT** rename or remove keys. Only add new ones.
+- This guarantees readability, time/space efficiency, and indexability across models.
+
+## 10. AUTO-FLAG RED FLAGS & DATA GAPS
+In addition to detailed sections, maintain top-level arrays:
+- 'auto_flagged_red_flags': machine-readable risk items with severity
+- 'data_gaps_and_conflicts': missing/contradictory data or low-confidence areas
+
+## 11. CALCULATE AGGREGATE SCORES
+- Provide quantified risk and quality scores (1-10 scale)
+- Enable instant screening and comparison across companies
+
+## 12. CAPTURE VALUATION CONTEXT
+- Extract current multiples AND historical context
+- Enable peer comparison and relative valuation assessment
+
+## 13. RPT FORENSICS & M&A TRACKING
+- **Deep Dive RPTs:** Do not just list RPTs; analyze for "arm's length" violations, margin leakage to promoter entities, and circular transactions.
+- **M&A Accountability:** Track acquisition history not just by deal value but by *synergy realization* and *impairment risk*.
+
+## 14. INDUSTRY-TO-STOCK LINKAGE (NEW)
+- Map how industry-level events propagate to this stock
+- Define sensitivity coefficients for sector shocks
+
+## Validation: Always double check on the financial_structure numbers, as LLMs can sometimes hallucinate a decimal point. Verify 3x against source text.
+
+---
+
+# GLOBAL OUTPUT SHAPE (TOP-LEVEL JSON)
+
+The final output MUST be a **single valid JSON object** (no markdown), structurally consistent with this skeleton:
+
+json
+{
+  "extraction_metadata": {},
+  "company_identity": {},
+  "organizational_cartography": [],
+  "human_capital_and_leadership": {},
+  "ownership_structure": {},
+  "financial_structure": {},
+  "physical_footprint": {},
+  "business_relationships": {},
+  "intellectual_property_and_workforce": {},
+  "risk_register": {},
+  "esg": {},
+  "guidance_and_growth": {},
+  "events_calendar": {},
+  
+  "valuation_and_peer_analysis": {},
+  "aggregate_scores": {},
+  
+  "market_and_sentiment": {},
+  "executive_social_and_volume": {},
+  
+  "related_party_forensics": {},
+  "ma_integration_and_synergies": {},
+  
+  "shareholder_activism": {},
+  "supply_chain_risk": {},
+  "customer_satisfaction": {},
+  "macro_triggers": {},
+  "regulatory_calendar": {},
+  "corporate_action_history_impact": {},
+  
+  "sector_adaptive_intelligence": {},
+  
+  "industry_linkage_and_ripple_effects": {},
+  "knowledge_graph_schema": {},
+  
+  "auto_flagged_red_flags": [],
+  "data_gaps_and_conflicts": {}
+}
+
+- For any unavailable field, use 'null' or '""' as appropriate (but **do not fabricate**).
+
+---
+
+# PART A: UNIVERSAL EXTRACTION (ALL COMPANIES)
+
+---
+
+## 1. EXTRACTION METADATA & NORTH STAR METRICS
+
+json
+{
+  "extraction_metadata": {
+    "document_sources": ["List all sources used"],
+    "extraction_timestamp": "ISO 8601",
+    "company_name": "",
+    "company_ticker": "",
+    "sector": "",
+    "industry": "",
+    "applicable_sector_modules": ["banking", "it_services", etc.],
+    "period_covered": "FY24 / Q2FY25 / etc.",
+    "extraction_confidence": "high/medium/low",
+    "data_completeness_percentage": "85%",
+    "fields_requiring_verification": ["List fields with low confidence"]
+  },
+  
+  "north_star_metrics": {
+    "primary_metric": {
+      "metric_name": "Revenue / AUM / GWP / GMV / Subscribers / etc.",
+      "current_value": "",
+      "unit": "",
+      "yoy_growth": "%",
+      "vs_guidance": "Beat/Miss/In-line",
+      "vs_consensus": "Beat/Miss/In-line"
+    },
+    "secondary_metric": {
+      "metric_name": "PAT / NII / VNB / EBITDA / etc.",
+      "current_value": "",
+      "unit": "",
+      "yoy_growth": "%"
+    },
+    "efficiency_metric": {
+      "metric_name": "ROE / ROCE / NIM / Combined Ratio / etc.",
+      "current_value": "",
+      "trend": "Improving/Stable/Declining"
+    },
+    "quality_metric": {
+      "metric_name": "GNPA / Attrition / Utilization / etc.",
+      "current_value": "",
+      "trend": "Improving/Stable/Declining"
+    },
+    "investor_focus_this_quarter": "What analysts are watching most closely"
+  }
+}
+'''
+
+---
+
+## 2. COMPANY IDENTITY & CLASSIFICATION
+
+### 2.1 BASIC IDENTITY
+'''json
+{
+  "company_name": "Full legal name as per ROC",
+  "ticker_nse": "NSE trading symbol",
+  "ticker_bse": "BSE code (6 digits)",
+  "isin": "INE code",
+  "cin": "Corporate Identification Number (21 chars)",
+  "registered_name": "Exact name as per MCA",
+  "registered_address": "Full registered office address with PIN",
+  "corporate_office": "If different from registered",
+  "website": "Official URL",
+  "investor_relations_contact": "IR email/phone"
+}
+'''
+
+### 2.2 CLASSIFICATION
+json
+{
+  "sector_nse": "NSE sector classification",
+  "sector_bse": "BSE sector classification",
+  "industry_gics": "GICS sub-industry (be specific: 'Specialty Chemicals' not 'Chemicals')",
+  "business_description_short": "What company does in 1 sentence",
+  "business_description_detailed": "Detailed description with all revenue streams",
+  "primary_business_model": "B2B/B2C/B2B2C/Platform/Manufacturing/Services/Hybrid",
+  "market_cap": "₹X Cr (with currency)",
+  "market_cap_bucket": "Mega Cap (>₹2L Cr) / Large Cap (₹20K-2L Cr) / Mid Cap (₹5K-20K Cr) / Small Cap (₹1K-5K Cr) / Micro Cap (<₹1K Cr)",
+  "enterprise_value": "If available"
+}
+'''
+
+### 2.3 ALIASES & BRAND IDENTITIES
+'''json
+{
+  "legal_aliases": ["Former names", "Registered variations"],
+  "trading_names": ["How markets refer to it"],
+  "brand_names_owned": ["Consumer-facing brands"],
+  "common_abbreviations": ["TCS", "INFY", "RIL"],
+  "subsidiary_brands_household": ["Jio", "Zomato", "Finacle"]
+}
+'''
+
+### 2.4 GROUP STRUCTURE & CORPORATE FAMILY
+'''json
+{
+  "promoter_group": "Family/Group name (Tata, Adani, Birla, Murugappa, Bajaj, etc.)",
+  "promoter_family_members": ["Names of family members if on board or holding shares"],
+  "parent_company": "Immediate parent if subsidiary",
+  "ultimate_parent": "Top of ownership chain",
+  "global_parent_correlation": {
+    "global_parent_name": "e.g., Siemens AG, ABB Ltd",
+    "global_parent_ticker": "If listed",
+    "relationship_type": "Subsidiary/Licensee/JV/Franchise",
+    "dependency_level": "High/Medium/Low",
+    "technology_agreement": {
+      "exists": true,
+      "royalty_rate_percent": "",
+      "expiry_date": ""
+    },
+    "brand_license": {
+      "exists": true,
+      "terms": "",
+      "expiry": ""
+    },
+    "export_to_parent_percentage": "",
+    "order_from_parent_percentage": "",
+    "management_secondment": "Any expat managers",
+    "transfer_pricing_policy": ""
+  },
+  "is_flagship": "true if main group company",
+  "group_companies_listed": [
+    {"name": "", "ticker": "", "relationship": "Sibling/Parent/Subsidiary", "market_cap": ""}
+  ],
+  "group_companies_unlisted_material": ["Significant unlisted entities"],
+  "cross_holdings": [
+    {"holds_stake_in": "", "stake_percentage": "", "purpose": "Strategic/Investment/Historical"}
+  ]
+}
+'''
+
+### 2.5 LISTING & INDEX STATUS
+'''json
+{
+  "is_listed_nse": true,
+  "is_listed_bse": true,
+  "listing_date": "YYYY-MM-DD",
+  "ipo_price": "If available",
+  "ipo_issue_size": "",
+  "index_membership": ["Nifty 50", "Sensex", "Nifty Bank", "Nifty IT", "Nifty Midcap 100"],
+  "index_weight_nifty50": "% weight if in Nifty 50",
+  "index_weight_sensex": "% weight if in Sensex",
+  "index_weight_sectoral": "% weight in sectoral index",
+  "is_fno_stock": true,
+  "fno_lot_size": 400,
+  "fno_margin_requirement": "%",
+  "is_msci_member": true,
+  "msci_index": "MSCI India / MSCI EM / MSCI World",
+  "msci_weight": "If available",
+  "ftse_membership": "",
+  "adr_gdr_listed": "NYSE/NASDAQ/LSE/Luxembourg/None",
+  "adr_ratio": "X ADR = Y shares",
+  "adr_ticker": "If applicable",
+  "adr_premium_discount": "vs local shares"
+}
+'''
+
+---
+
+## 3. ORGANIZATIONAL CARTOGRAPHY (COMPLETE ENTITY MAP)
+
+**INSTRUCTION:** Do NOT limit to "material" subsidiaries. Map the ENTIRE corporate universe.
+
+For EACH entity in the corporate family:
+'''json
+{
+  "entity_name": "Exact legal name",
+  "entity_type": "Subsidiary/Step-down/Associate/JV/SPV/Holding Company/Trust/LLP/Foundation",
+  "ticker_if_listed": "Ticker or null",
+  
+  "ownership_structure": {
+    "ownership_percentage": "Exact % (e.g., 74.9%)",
+    "ownership_type": "Direct / Indirect through [entity name]",
+    "intermediate_holding": "Which entity holds this if step-down",
+    "ownership_change_recent": "Any recent change in stake"
+  },
+  
+  "consolidation": {
+    "consolidation_treatment": "Full/Proportionate/Equity Method/Not Consolidated",
+    "reason_if_not_consolidated": "If applicable"
+  },
+  
+  "geography": {
+    "incorporation_country": "Specific country",
+    "incorporation_state": "If India, which state",
+    "incorporation_date": "YYYY-MM-DD",
+    "operational_geography": "Where it actually operates",
+    "registered_address": ""
+  },
+  
+  "business": {
+    "business_description": "What this entity specifically does",
+    "business_segment_mapping": "Which reporting segment it falls under",
+    "operational_role": "Delivery Center/Sales Hub/Manufacturing/R&D/Holding/Treasury/IP Holding/Tax Vehicle/Dormant"
+  },
+  
+  "financial_contribution": {
+    "revenue_amount": "",
+    "revenue_contribution_percentage": "% of consolidated revenue",
+    "profit_amount": "",
+    "profit_contribution_percentage": "% of consolidated PAT",
+    "asset_size": "Total assets",
+    "net_worth": "",
+    "is_loss_making": "true/false",
+    "accumulated_losses": "If loss-making"
+  },
+  
+  "flags": {
+    "is_material": "true if >5% of revenue/assets OR strategically important",
+    "is_regulated": "true if needs separate license",
+    "is_dormant": "true if no active operations",
+    "is_recently_incorporated": "true if <2 years old",
+    "has_recent_issues": "Any incidents, regulatory actions, disputes",
+    "is_up_for_disposal": "true if divestment planned"
+  },
+  
+  "confidence": "high/medium/low"
+}
+'''
+
+---
+
+## 4. HUMAN CAPITAL & LEADERSHIP
+
+### 4.1 BOARD OF DIRECTORS
+
+For EACH director:
+'''json
+{
+  "name": "Full name with salutation",
+  "din": "Director Identification Number (8 digits)",
+  "designation": "Chairman/Vice-Chairman/MD/CEO/Whole-time Director/Executive Director/Independent Director/Non-Executive Director/Nominee Director",
+  "category": "Executive/Non-Executive/Independent",
+  
+  "roles": {
+    "is_chairman": true,
+    "is_vice_chairman": false,
+    "is_ceo": false,
+    "is_md": true,
+    "is_cfo": false,
+    "is_whole_time_director": true,
+    "is_independent": false,
+    "is_nominee": false,
+    "nominee_of": "If nominee, representing whom"
+  },
+  
+  "promoter_connection": {
+    "is_promoter": true,
+    "is_promoter_family": true,
+    "promoter_relationship": "Founder/Son of founder/Spouse/etc."
+  },
+  
+  "demographics": {
+    "gender": "Male/Female",
+    "nationality": "Indian/American/British/etc.",
+    "age": "If disclosed",
+    "date_of_birth": "",
+    "residence": "City/Country if disclosed"
+  },
+  
+  "tenure": {
+    "original_appointment_date": "First appointed to board",
+    "current_term_start": "",
+    "current_term_end": "",
+    "tenure_years_total": "",
+    "reappointment_due": "",
+    "retirement_due": ""
+  },
+  
+  "committees": [
+    {
+      "committee": "Audit/NRC/Risk Management/CSR/Stakeholders Relationship",
+      "role": "Chairman/Member"
+    }
+  ],
+  
+  "expertise": {
+    "expertise_areas": ["Finance", "Technology", "Industry", "Legal", "Government"],
+    "education": "Qualifications",
+    "alma_mater": ["Institutions"],
+    "previous_experience": "Key past roles"
+  },
+  
+  "compensation": {
+    "remuneration_latest_fy": "Total FY compensation",
+    "remuneration_breakdown": {
+      "fixed_salary": "",
+      "perquisites": "",
+      "commission": "",
+      "sitting_fees": ""
+    }
+  },
+  
+  "governance_metrics": {
+    "board_meetings_held": "",
+    "board_meetings_attended": "",
+    "attendance_percentage": "%"
+  },
+  
+  "red_flags": {
+    "excessive_directorships": "true if >7 listed companies",
+    "poor_attendance": "true if <75%",
+    "regulatory_history": "Any past regulatory action"
+  }
+}
+'''
+
+### 4.2 KEY MANAGERIAL PERSONNEL (KMPs)
+
+For EACH KMP:
+'''json
+{
+  "name": "",
+  "designation": "CEO/MD/CFO/Company Secretary/Whole-time Director/Manager",
+  "is_ceo": false,
+  "is_md": false,
+  "is_cfo": false,
+  "is_company_secretary": false,
+  "kmp_since": "",
+  "tenure_years": "",
+  "age": "",
+  "education": "",
+  "professional_qualifications": ["CA", "CS", "CMA", "CFA", "MBA"],
+  "previous_company": "",
+  "previous_role": "",
+  "total_experience_years": "",
+  "shares_held": "",
+  "remuneration_latest": "",
+  "key_statements": ["Max 3 important quotes from earnings calls"]
+}
+'''
+
+### 4.3 OPERATIONAL LEADERSHIP (THE REAL OPERATORS)
+
+'''json
+{
+  "business_vertical_heads": [
+    {
+      "name": "",
+      "designation": "President - BFSI / Head - Retail Vertical / CEO - India Business",
+      "vertical_portfolio": "Which business units they oversee",
+      "revenue_responsibility": "",
+      "reports_to": "",
+      "tenure_in_role": "",
+      "previous_company": ""
+    }
+  ],
+  
+  "geography_heads": [
+    {
+      "name": "",
+      "designation": "CEO - North America / MD - Europe / Country Head - India",
+      "geography_coverage": "",
+      "revenue_responsibility": "",
+      "tenure_in_role": ""
+    }
+  ],
+  
+  "function_heads": [
+    {
+      "name": "",
+      "designation": "CHRO/CTO/CMO/CDO/CSO/CRO/CLO/Chief Digital Officer/Chief Strategy Officer",
+      "function": "",
+      "tenure_in_role": "",
+      "previous_company": ""
+    }
+  ],
+  
+  "plant_facility_heads": [
+    {
+      "name": "",
+      "designation": "Plant Head - Hosur / VP Manufacturing - Dahej",
+      "facility": "",
+      "capacity_responsibility": "",
+      "employee_count": ""
+    }
+  ]
+}
+'''
+
+### 4.4 MANAGEMENT CHANGES (LAST 24 MONTHS)
+
+'''json
+{
+  "management_changes_24m": {
+    "exits": [
+      {
+        "name": "",
+        "role": "",
+        "exit_date": "",
+        "exit_type": "Resignation/Retirement/Termination/Health/Personal",
+        "stated_reason": "",
+        "real_reason_if_known": "",
+        "tenure_was": "",
+        "successor": "",
+        "is_sudden": "true if unexpected",
+        "is_red_flag": "true if CFO/Auditor/CS resignation without clear succession",
+        "market_reaction": "Stock movement on announcement day"
+      }
+    ],
+    "new_appointments": [
+      {
+        "name": "",
+        "role": "",
+        "appointment_date": "",
+        "previous_company": "",
+        "previous_role": "",
+        "appointment_type": "Internal promotion / External hire",
+        "market_reaction": ""
+      }
+    ]
+  }
+}
+'''
+
+### 4.5 SUCCESSION & KEY-MAN RISK
+
+'''json
+{
+  "succession_and_keyman_risk": {
+    "ceo_succession": {
+      "succession_plan_disclosed": "Yes/No/Partial",
+      "successor_identified": "",
+      "ceo_name": "",
+      "ceo_age": "",
+      "ceo_tenure_years": "",
+      "ceo_contract_end": ""
+    },
+    "founder_risk": {
+      "founder_still_active": true,
+      "founder_name": "",
+      "founder_role": "",
+      "founder_age": "",
+      "founder_shareholding": "%",
+      "next_gen_identified": "Yes/No",
+      "next_gen_name": "",
+      "next_gen_readiness": "Ready/In training/Too young/Not involved"
+    },
+    "key_man_assessment": {
+      "key_man_dependency": "Critical/High/Medium/Low",
+      "key_man_names": ["People whose departure would materially impact business"],
+      "key_man_insurance": "In place / Not disclosed / Not in place",
+      "management_depth": "Strong bench / Adequate bench / Thin bench / Single point of failure"
+    }
+  }
+}
+'''
+
+### 4.6 AUDITOR & GOVERNANCE
+
+'''json
+{
+  "auditor_and_governance": {
+    "statutory_auditor": {
+      "firm_name": "",
+      "firm_type": "Big 4 / Mid-tier / Regional",
+      "signing_partner": "",
+      "tenure_years": "",
+      "rotation_due": "",
+      "previous_auditor": ""
+    },
+    
+    "audit_fees": {
+      "statutory_audit_fees": "₹",
+      "total_auditor_remuneration": "₹",
+      "non_audit_to_audit_ratio": "% (Flag if >50%)"
+    },
+    
+    "audit_opinion": {
+      "opinion_type": "Unmodified/Qualified/Adverse/Disclaimer",
+      "emphasis_of_matter": ["List any EoM paragraphs"],
+      "key_audit_matters": ["KAMs highlighted"],
+      "qualification_details": "If qualified, what for"
+    },
+    
+    "auditor_red_flags": {
+      "auditor_resigned": "true if mid-term resignation (CRITICAL RED FLAG)",
+      "resignation_date": "",
+      "resignation_reason": "",
+      "auditor_changed_recently": "true if changed in last 2 years",
+      "any_qualifications_history": "Qualified opinions in last 5 years",
+      "restatements_required": "Any earnings restatements"
+    }
+  }
+}
+'''
+
+---
+
+## 5. OWNERSHIP STRUCTURE (FOLLOW THE MONEY)
+
+### 5.1 PROMOTER HOLDING & PLEDGE
+
+'''json
+{
+  "promoter_holding": {
+    "promoter_holding_summary": {
+      "total_promoter_percentage": "%",
+      "total_promoter_shares": "",
+      "promoter_count": ""
+    },
+    
+    "promoter_entities": [
+      {
+        "name": "",
+        "category": "Individual/Body Corporate/Trust/HUF",
+        "holding_percentage": "",
+        "holding_shares": "",
+        "relationship": "",
+        "is_controlling": true
+      }
+    ],
+    
+    "promoter_trend": {
+      "change_qoq_percentage": "",
+      "change_yoy_percentage": "",
+      "trend_3_year": "Increasing/Decreasing/Stable",
+      "creeping_acquisition": "true if systematically increasing"
+    },
+    
+    "pledge_encumbrance": {
+      "pledge_percentage_of_promoter_holding": "%",
+      "pledge_percentage_of_total_equity": "%",
+      "pledge_shares": "",
+      "pledge_value_current": "",
+      "pledge_change_qoq": "",
+      "pledge_trend": "Increasing/Decreasing/Stable",
+      "pledged_with": ["Names of lenders"],
+      "pledge_purpose": "",
+      "pledge_trigger_price": "If disclosed",
+      "distance_from_trigger": "% buffer",
+      "pledge_risk_assessment": "Critical (>50%) / High (25-50%) / Medium (10-25%) / Low (<10%) / None"
+    }
+  }
+}
+'''
+
+### 5.2 INSTITUTIONAL & PUBLIC HOLDINGS
+
+'''json
+{
+  "institutional_and_public_holding": {
+    "fii_fpi": {
+      "holding_percentage": "",
+      "holding_value": "₹",
+      "investor_count": "",
+      "change_qoq_percentage": "",
+      "trend_3_year": "Increasing/Decreasing/Stable"
+    },
+    
+    "dii": {
+      "holding_percentage": "",
+      "change_qoq": ""
+    },
+    
+    "dii_breakdown": {
+      "mutual_funds_percentage": "",
+      "insurance_companies_percentage": "",
+      "pension_funds_percentage": "",
+      "banks_percentage": ""
+    },
+    
+    "top_10_shareholders": [
+      {
+        "rank": 1,
+        "name": "",
+        "category": "Promoter/MF/FII/Insurance/Individual/EPFO",
+        "holding_percentage": "",
+        "change_qoq_percentage": ""
+      }
+    ],
+    
+    "top_mf_holders": [
+      {
+        "fund_house": "",
+        "scheme_names": ["Specific schemes holding"],
+        "combined_holding_percentage": "",
+        "change_qoq": ""
+      }
+    ],
+    
+    "notable_fii_holders": [
+      {
+        "institution": "GIC / Vanguard / BlackRock / ADIA",
+        "holding_percentage": "",
+        "is_sovereign_wealth_fund": true,
+        "is_passive_index_fund": false
+      }
+    ],
+    
+    "notable_individual_holders": [
+      {
+        "name": "Rakesh Jhunjhunwala / Dolly Khanna / etc.",
+        "holding_percentage": "",
+        "is_known_investor": true,
+        "change_qoq": ""
+      }
+    ],
+    
+    "insider_trading_activity": {
+      "insider_buys": [
+        {
+          "name": "",
+          "designation": "",
+          "date": "",
+          "shares_bought": "",
+          "value": "₹",
+          "price_per_share": ""
+        }
+      ],
+      "insider_sells": [],
+      "block_deals_recent": [],
+      "bulk_deals_recent": []
+    },
+    
+    "insider_trading_correlation": {
+      "lookback_window_months": 12,
+      "pattern_summary": "Net buying before results / Selling before bad news / No pattern",
+      "interpretation": "Bullish signal / Bearish signal / Neutral"
+    }
+  }
+}
+'''
+
+---
+
+## 6. FINANCIAL STRUCTURE
+
+### 6.1 DEBT POSITION
+
+'''json
+{
+  "debt_structure": {
+    "debt_summary": {
+      "total_debt": "₹ Cr",
+      "long_term_debt": "",
+      "short_term_debt": "",
+      "current_maturities_of_long_term": "",
+      "lease_liabilities": "IFRS 16 / Ind AS 116",
+      "working_capital_borrowings": ""
+    },
+    
+    "debt_composition": [
+      {
+        "instrument_type": "Term Loan/NCD/Bank OD/CC/Commercial Paper/ECB/FCCB",
+        "lender_name": "",
+        "amount_outstanding": "",
+        "interest_rate": "Fixed X% / MCLR+X%",
+        "rate_type": "Fixed/Floating",
+        "maturity_date": "",
+        "security": "Secured by [assets] / Unsecured",
+        "currency": "INR/USD/EUR",
+        "hedged": "Yes/No/Partial"
+      }
+    ],
+    
+    "debt_ratios": {
+      "gross_debt": "",
+      "cash_and_equivalents": "",
+      "net_debt": "",
+      "net_debt_negative": "true if cash > debt",
+      "gross_debt_to_equity": "",
+      "net_debt_to_equity": "",
+      "net_debt_to_ebitda": "",
+      "interest_coverage_ratio": "",
+      "debt_service_coverage_ratio": ""
+    },
+    
+    "debt_profile": {
+      "weighted_avg_cost_of_debt": "%",
+      "weighted_avg_maturity_years": "",
+      "fixed_vs_floating_mix": "X% Fixed / Y% Floating",
+      "secured_vs_unsecured_mix": "",
+      "inr_vs_foreign_mix": ""
+    },
+    
+    "debt_covenants": {
+      "covenants": [
+        {
+          "covenant_type": "Financial/Non-Financial",
+          "covenant_description": "Debt/Equity < 2 / Interest Coverage > 3",
+          "threshold": "",
+          "current_level": "",
+          "headroom_percentage": "%",
+          "breach_risk": "High/Medium/Low/None"
+        }
+      ],
+      "covenant_breach_history": "",
+      "covenant_waiver_obtained": ""
+    },
+    
+    "debt_repayment_schedule": {
+      "next_12_months_total": "₹",
+      "1_to_2_years": "₹",
+      "2_to_3_years": "₹",
+      "3_to_5_years": "₹",
+      "beyond_5_years": "₹"
+    },
+    
+    "refinancing": {
+      "large_maturities_12m": "₹",
+      "refinancing_plan": "",
+      "refinancing_risk": "High/Medium/Low"
+    }
+  }
+}
+'''
+
+### 6.2 CREDIT RATING
+
+'''json
+{
+  "credit_ratings": {
+    "domestic_ratings": [
+      {
+        "agency": "CRISIL/ICRA/CARE/India Ratings/Brickwork/Acuite",
+        "instrument": "Long-term Bank Facilities/NCDs/Commercial Paper",
+        "rated_amount": "₹ Cr",
+        "rating": "AAA/AA+/AA/AA-/A+/A/A-/BBB+",
+        "outlook": "Stable/Positive/Negative/Watch",
+        "last_action": "Upgraded/Downgraded/Reaffirmed/Placed on Watch",
+        "last_action_date": "",
+        "previous_rating": "",
+        "rating_rationale_summary": "",
+        "rating_sensitivities_positive": "",
+        "rating_sensitivities_negative": ""
+      }
+    ],
+    
+    "international_ratings": {
+      "agency": "Moody's/S&P/Fitch",
+      "rating": "",
+      "outlook": "",
+      "last_action": ""
+    },
+    
+    "rating_history": {
+      "upgrades_5yr": [],
+      "downgrades_5yr": [],
+      "rating_trend": "Improving/Stable/Deteriorating"
+    },
+    
+    "rating_red_flags": {
+      "recent_downgrade": "true if downgraded in last 12 months",
+      "on_credit_watch": "true if currently on watch",
+      "outlook_negative": "true if outlook is negative"
+    }
+  }
+}
+
+
+### 6.3 CONTINGENT LIABILITIES (NEW)
+
+json
+{
+  "contingent_liabilities": {
+    "total_contingent_liabilities": "₹ Cr",
+    "contingent_as_percent_of_net_worth": "%",
+    "contingent_as_percent_of_revenue": "%",
+    "contingent_trend_3yr": "Increasing/Stable/Decreasing",
+    
+    "contingent_liability_breakup": [
+      {
+        "category": "Tax Disputes/Legal Claims/Guarantees Given/LC-BG Outstanding/Other",
+        "description": "Specific matter description",
+        "amount_claimed": "₹ Cr",
+        "company_estimate_of_liability": "₹ Cr",
+        "counterparty": "IT Dept/Customs/Supplier/Customer/Govt Agency",
+        "case_status": "Pending/Appeal Filed/Favorable Order/Adverse Order/Settlement",
+        "forum": "ITAT/High Court/Supreme Court/NCLT/Arbitration",
+        "next_hearing_date": "",
+        "company_position": "Expects favorable outcome/Uncertain/Adverse expected",
+        "probability_of_outflow": "Remote/Possible/Probable",
+        "max_exposure": "₹ Cr",
+        "provision_made": "₹ Cr",
+        "auditor_comment": ""
+      }
+    ],
+    
+    "guarantees_given": {
+      "corporate_guarantees_to_subsidiaries": "₹ Cr",
+      "corporate_guarantees_to_jv_associates": "₹ Cr",
+      "corporate_guarantees_to_third_parties": "₹ Cr",
+      "personal_guarantees_by_promoters": "₹ Cr",
+      "bank_guarantees_outstanding": "₹ Cr",
+      "lc_outstanding": "₹ Cr"
+    },
+    
+    "major_disputes": [
+      {
+        "dispute_name": "",
+        "amount_at_stake": "₹ Cr",
+        "nature": "Income Tax/GST/Customs/Transfer Pricing/Environmental/Labor/Contract/IP",
+        "year_originated": "",
+        "current_status": "",
+        "impact_if_adverse": "Material/Moderate/Immaterial",
+        "management_confidence": "High/Medium/Low"
+      }
+    ],
+    
+    "contingent_red_flags": {
+      "contingent_exceeds_net_worth": "true if >100% of net worth",
+      "contingent_exceeds_50pct_net_worth": "true",
+      "large_single_dispute": "true if any single dispute >10% net worth",
+      "adverse_orders_recent": "",
+      "increasing_trend": "true if growing faster than business"
+    }
+  }
+}
+'''
+
+### 6.4 CASH & LIQUIDITY
+
+'''json
+{
+  "cash_and_liquidity": {
+    "cash_position": {
+      "cash_and_bank_balances": "",
+      "cash_in_hand": "",
+      "balances_with_banks_current": "",
+      "balances_with_banks_deposits": "",
+      "earmarked_balances": "",
+      "term_deposits_3to12m": ""
+    },
+    
+    "current_investments": {
+      "total_value": "",
+      "breakdown": [
+        {"type": "Liquid MF", "amount": ""},
+        {"type": "FMPs", "amount": ""},
+        {"type": "Bonds/Debentures", "amount": ""}
+      ]
+    },
+    
+    "liquidity_metrics": {
+      "total_liquid_assets": "",
+      "liquidity_coverage_months": "",
+      "current_ratio": "",
+      "quick_ratio": "",
+      "cash_ratio": ""
+    },
+    
+    "working_capital_cycle": {
+      "inventory_days": {
+        "current": "",
+        "previous_year": "",
+        "3yr_average": "",
+        "trend": "Improving/Stable/Deteriorating",
+        "vs_industry_avg": "Better/In-line/Worse"
+      },
+      "receivable_days": {
+        "current": "",
+        "previous_year": "",
+        "3yr_average": "",
+        "trend": "Improving/Stable/Deteriorating",
+        "vs_industry_avg": "Better/In-line/Worse",
+        "concentration_risk": "High if top customer >20% receivables"
+      },
+      "payable_days": {
+        "current": "",
+        "previous_year": "",
+        "3yr_average": "",
+        "trend": "Stable/Stretching/Shortening",
+        "supplier_relationship_risk": ""
+      },
+      "cash_conversion_cycle": {
+        "current_days": "",
+        "previous_year": "",
+        "3yr_average": "",
+        "trend": "Improving/Stable/Deteriorating",
+        "working_capital_intensity": "High (>90 days)/Medium (30-90)/Low (<30)/Negative"
+      },
+      "working_capital_as_pct_of_revenue": "",
+      "working_capital_funding": "Self-funded/Bank-funded/Mixed"
+    },
+    
+    "cash_flow_quality": {
+      "cfo_latest_year": "",
+      "cfo_ttm": "",
+      "cfo_to_pat_ratio": "",
+      "cfo_to_ebitda_ratio": "",
+      "cfo_trend_3yr": "Improving/Stable/Declining",
+      "fcf_latest_year": "",
+      "fcf_yield": "%",
+      "cash_conversion_quality": "Strong/Moderate/Weak",
+      "accrual_ratio": ""
+    }
+  }
+}
+'''
+
+### 6.5 DIVIDEND POLICY (NEW)
+
+'''json
+{
+  "dividend_policy": {
+    "dividend_policy_stated": "Exact policy from AR if disclosed",
+    "payout_ratio_target": "% if disclosed",
+    
+    "dividend_history": {
+      "fy_current": {
+        "dividend_per_share": "₹",
+        "dividend_yield": "%",
+        "payout_ratio": "%",
+        "total_dividend_outflow": "₹ Cr",
+        "dividend_type": "Interim/Final/Special"
+      },
+      "fy_minus_1": {},
+      "fy_minus_2": {},
+      "fy_minus_3": {},
+      "fy_minus_4": {}
+    },
+    
+    "dividend_metrics": {
+      "dividend_yield_current": "%",
+      "dividend_yield_5yr_avg": "%",
+      "payout_ratio_5yr_avg": "%",
+      "dividend_cagr_5yr": "%",
+      "dividend_consistency": "Consistent/Irregular/No dividend history",
+      "consecutive_years_paid": "",
+      "dividend_growth_streak": ""
+    },
+    
+    "dividend_sustainability": {
+      "dividend_coverage_ratio": "",
+      "fcf_coverage_of_dividend": "",
+      "dividend_from_reserves": "true if paying from reserves despite losses",
+      "sustainability_assessment": "Highly Sustainable/Sustainable/At Risk/Unsustainable"
+    },
+    
+    "buyback_history": [
+      {
+        "year": "",
+        "buyback_size": "₹ Cr",
+        "buyback_price": "₹",
+        "shares_bought_back": "",
+        "pct_of_equity_bought": "%"
+      }
+    ],
+    
+    "capital_return_preference": "Dividend focused/Buyback focused/Balanced/Growth reinvestment/No returns"
+  }
+}
+'''
+
+### 6.6 FOREX EXPOSURE (NEW - UNIVERSAL FOR EXPORTERS)
+
+'''json
+{
+  "forex_exposure": {
+    "is_significant_exporter": "true if export revenue >20%",
+    "is_significant_importer": "true if import costs >20%",
+    "natural_hedge_exists": "true if export revenue offsets import costs",
+    
+    "export_exposure": {
+      "export_revenue_percentage": "%",
+      "primary_currencies": ["USD", "EUR", "GBP"],
+      "currency_wise_breakup": [
+        {"currency": "USD", "percentage": "%"},
+        {"currency": "EUR", "percentage": "%"}
+      ]
+    },
+    
+    "import_exposure": {
+      "import_cost_percentage": "%",
+      "primary_currencies": ["USD", "CNY"],
+      "currency_wise_breakup": []
+    },
+    
+    "hedging_policy": {
+      "hedging_policy_exists": "Yes/No",
+      "hedging_horizon": "X months rolling",
+      "hedge_ratio_target": "%",
+      "instruments_used": ["Forwards", "Options", "Cross-currency swaps"],
+      "hedge_accounting_applied": "Yes/No"
+    },
+    
+    "current_hedge_position": {
+      "total_hedged_amount": "$ or ₹",
+      "hedged_percentage_of_exposure": "%",
+      "unhedged_percentage": "%",
+      "average_hedge_rate": "₹/$ or ₹/€",
+      "current_spot_rate": "",
+      "mtm_gain_loss": "₹ Cr",
+      "hedge_maturity_profile": "0-3m: X%, 3-6m: Y%, 6-12m: Z%"
+    },
+    
+    "forex_sensitivity": {
+      "impact_of_1_rupee_depreciation": "₹ Cr (+ for exporters, - for importers)",
+      "impact_of_1_rupee_appreciation": "₹ Cr",
+      "breakeven_exchange_rate": "If disclosed"
+    },
+    
+    "forex_red_flags": {
+      "large_unhedged_exposure": "true if unhedged >50%",
+      "mtm_losses_significant": "true if MTM loss >5% of PAT",
+      "hedging_policy_changed": "Any recent change",
+      "speculative_forex_positions": "true if any"
+    }
+  }
+}
+'''
+
+---
+
+## 7. PHYSICAL FOOTPRINT
+
+'''json
+{
+  "physical_footprint": {
+    "headquarters": {
+      "location": "",
+      "address": "",
+      "owned_leased": ""
+    },
+    
+    "manufacturing_facilities": [
+      {
+        "facility_name": "",
+        "location": "City, State, Country",
+        "owned_leased": "",
+        "products_manufactured": [],
+        "capacity": "",
+        "capacity_unit": "",
+        "current_utilization": "%",
+        "expansion_planned": "",
+        "employee_count": "",
+        "certifications": ["ISO", "GMP", "USFDA approved"],
+        "recent_issues": "Any plant issues, strikes, closures"
+      }
+    ],
+    
+    "r_and_d_centers": [
+      {
+        "location": "",
+        "focus_areas": [],
+        "employee_count": "",
+        "investment": ""
+      }
+    ],
+    
+    "offices": {
+      "domestic_offices_count": "",
+      "international_offices_count": "",
+      "key_locations": []
+    },
+    
+    "land_bank": {
+      "total_land_owned_acres": "",
+      "land_value_estimated": "₹ Cr",
+      "locations": [],
+      "development_potential": ""
+    },
+    
+    "geographic_revenue_split": [
+      {
+        "geography": "India/North America/Europe/APAC/Middle East/LatAm/Africa",
+        "revenue_percentage": "",
+        "revenue_amount": "",
+        "growth_rate": "",
+        "trend": "Growing/Stable/Declining"
+      }
+    ]
+  }
+}
+'''
+
+---
+
+## 8. BUSINESS RELATIONSHIPS
+
+### 8.1 CUSTOMER ANALYSIS
+
+'''json
+{
+  "customer_analysis": {
+    "customer_concentration": {
+      "top_customer_percentage": "",
+      "top_5_customers_percentage": "",
+      "top_10_customers_percentage": "",
+      "concentration_risk": "High (>30%) / Medium (15-30%) / Low (<15%)"
+    },
+    
+    "key_customers": [
+      {
+        "customer_name": "Named if disclosed, else 'Customer A'",
+        "customer_industry": "",
+        "revenue_from_customer": "",
+        "percentage_of_total": "",
+        "relationship_tenure_years": "",
+        "contract_type": "Long-term / Short-term / Spot",
+        "contract_expiry": "",
+        "renewal_risk": "High/Medium/Low",
+        "recent_developments": ""
+      }
+    ],
+    
+    "customer_segments": [
+      {
+        "segment": "Enterprise/SMB/Government/Retail",
+        "revenue_percentage": "",
+        "growth_rate": "",
+        "profitability": "High/Medium/Low"
+      }
+    ],
+    
+    "customer_metrics": {
+      "total_customers": "",
+      "active_customers": "",
+      "customer_additions_annual": "",
+      "customer_churn_rate": "",
+      "average_revenue_per_customer": "",
+      "customer_lifetime_value": ""
+    }
+  }
+}
+'''
+
+### 8.2 SUPPLIER ANALYSIS
+
+'''json
+{
+  "supplier_analysis": {
+    "supplier_concentration": {
+      "top_supplier_percentage": "",
+      "top_5_suppliers_percentage": "",
+      "concentration_risk": "High/Medium/Low"
+    },
+    
+    "key_suppliers": [
+      {
+        "supplier_name": "",
+        "supplier_type": "Raw Material/Component/Service/Technology",
+        "material_supplied": "",
+        "purchase_value": "",
+        "percentage_of_total_purchases": "",
+        "origin_country": "",
+        "alternative_available": "Yes/Limited/No",
+        "contract_type": "",
+        "price_mechanism": "Fixed/Variable/Index-linked",
+        "relationship_tenure": ""
+      }
+    ],
+    
+    "supply_chain_risks": {
+      "single_source_dependencies": [
+        {
+          "material": "",
+          "supplier": "",
+          "risk_level": "Critical/High/Medium",
+          "mitigation": ""
+        }
+      ],
+      "geographic_concentration": {
+        "china_dependency_percentage": "%",
+        "taiwan_dependency_percentage": "%",
+        "other_risk_geographies": []
+      },
+      "import_dependency": {
+        "total_import_percentage": "%",
+        "key_imports": [],
+        "currency_exposure": ""
+      }
+    }
+  }
+}
+'''
+
+---
+
+## 9. RISK REGISTER
+
+'''json
+{
+  "risk_register": {
+    "top_10_risks": [
+      {
+        "risk_id": "R001",
+        "risk_name": "",
+        "risk_category": "Strategic/Operational/Financial/Regulatory/Compliance/Reputational/Cyber/ESG",
+        "risk_description": "",
+        "likelihood": "High/Medium/Low",
+        "impact": "Critical/High/Medium/Low",
+        "risk_score": "1-25 (Likelihood x Impact)",
+        "trend": "Increasing/Stable/Decreasing",
+        "mitigation_measures": "",
+        "risk_owner": "Role/Function responsible",
+        "monitoring_frequency": "Daily/Weekly/Monthly/Quarterly"
+      }
+    ],
+    
+    "risk_categories_summary": {
+      "strategic_risks": ["List key strategic risks"],
+      "operational_risks": [],
+      "financial_risks": [],
+      "regulatory_risks": [],
+      "technology_risks": [],
+      "esg_risks": []
+    },
+    
+    "recent_risk_materializations": [
+      {
+        "event": "",
+        "date": "",
+        "impact": "",
+        "response": "",
+        "lessons_learned": ""
+      }
+    ],
+    
+    "insurance_coverage": {
+      "key_policies": ["Property", "D&O", "Cyber", "Product Liability"],
+      "coverage_adequacy": "Adequate/Partial/Concerns"
+    }
+  }
+}
+'''
+
+---
+
+## 10. ESG
+
+'''json
+{
+  "esg": {
+    "environmental": {
+      "carbon_footprint": {
+        "scope_1_emissions": "tonnes CO2e",
+        "scope_2_emissions": "",
+        "scope_3_emissions": "",
+        "emission_intensity": "per revenue / per unit",
+        "yoy_change": "%",
+        "reduction_target": "",
+        "target_year": ""
+      },
+      "energy": {
+        "total_energy_consumption": "",
+        "renewable_energy_percentage": "%",
+        "energy_intensity": "",
+        "renewable_target": ""
+      },
+      "water": {
+        "water_consumption": "",
+        "water_recycled_percentage": "%",
+        "water_stress_areas": ""
+      },
+      "waste": {
+        "waste_generated": "",
+        "waste_recycled_percentage": "%",
+        "hazardous_waste": ""
+      }
+    },
+    
+    "social": {
+      "workforce": {
+        "total_employees": "",
+        "diversity_gender": "% female",
+        "diversity_board": "% female directors",
+        "attrition_rate": "%",
+        "employee_satisfaction_score": ""
+      },
+      "safety": {
+        "ltifr": "",
+        "fatalities": "",
+        "safety_incidents": ""
+      },
+      "community": {
+        "csr_spend": "₹ Cr",
+        "csr_as_percentage_of_pat": "%",
+        "key_csr_initiatives": []
+      }
+    },
+    
+    "governance": {
+      "board_independence": "%",
+      "board_diversity": "%",
+      "separate_chairman_ceo": "Yes/No",
+      "whistle_blower_policy": "Yes/No",
+      "related_party_concerns": "Yes/No"
+    },
+    
+    "esg_ratings": {
+      "msci_esg_rating": "AAA to CCC",
+      "sustainalytics_score": "",
+      "cdp_score": "",
+      "brsr_compliance": "Yes/Partial/No"
+    }
+  }
+}
+'''
+
+---
+
+## 11. GUIDANCE AND GROWTH
+
+'''json
+{
+  "guidance_and_growth": {
+    "company_guidance": {
+      "revenue_guidance": {
+        "guidance_type": "Absolute/Growth rate/Range",
+        "guidance_value": "",
+        "guidance_period": "",
+        "vs_consensus": "Above/In-line/Below"
+      },
+      "margin_guidance": {},
+      "capex_guidance": {
+        "guidance_value": "₹ Cr",
+        "guidance_period": "",
+        "capex_purpose": []
+      },
+      "other_guidance": []
+    },
+    
+    "guidance_track_record": {
+      "last_4_quarters_beat_miss": ["Beat", "Miss", "In-line", "Beat"],
+      "guidance_credibility": "High/Medium/Low"
+    },
+    
+    "growth_drivers": [
+      {
+        "driver": "",
+        "description": "",
+        "timeline": "Short/Medium/Long term",
+        "probability": "High/Medium/Low",
+        "impact_magnitude": "High/Medium/Low"
+      }
+    ],
+    
+    "growth_concerns": [
+      {
+        "concern": "",
+        "impact": "",
+        "mitigation": ""
+      }
+    ],
+    
+    "capex_tracker": {
+      "announced_capex_projects": [
+        {
+          "project_name": "",
+          "investment_amount": "₹ Cr",
+          "announced_date": "",
+          "expected_completion": "",
+          "current_status": "Planning/In progress/Delayed/Completed",
+          "amount_spent_so_far": "",
+          "delay_if_any": "",
+          "expected_revenue_contribution": ""
+        }
+      ],
+      "capex_execution_track_record": "Strong/Average/Poor"
+    }
+  }
+}
+'''
+
+---
+
+## 12. EVENTS CALENDAR
+
+'''json
+{
+  "events_calendar": {
+    "upcoming_events": [
+      {
+        "event_type": "Results/AGM/EGM/Dividend/Split/Bonus/Rights/Buyback",
+        "event_date": "",
+        "record_date": "",
+        "details": ""
+      }
+    ],
+    
+    "historical_events_12m": [
+      {
+        "event_type": "",
+        "event_date": "",
+        "details": "",
+        "market_reaction": ""
+      }
+    ],
+    
+    "typical_calendar": {
+      "q1_results_month": "July",
+      "q2_results_month": "October",
+      "q3_results_month": "January",
+      "q4_results_month": "April/May",
+      "agm_month": "",
+      "dividend_payment_month": ""
+    }
+  }
+}
+'''
+
+---
+
+## 13. VALUATION AND PEER ANALYSIS (ENHANCED)
+
+'''json
+{
+  "valuation_and_peer_analysis": {
+    "current_valuation": {
+      "price_current": "₹",
+      "price_date": "",
+      "market_cap": "₹ Cr",
+      "enterprise_value": "₹ Cr",
+      
+      "pe_ratio": {
+        "trailing_ttm": "",
+        "forward_fy1": "",
+        "forward_fy2": "",
+        "vs_5yr_avg": "Premium/Discount/In-line",
+        "vs_10yr_avg": ""
+      },
+      "pb_ratio": "",
+      "ps_ratio": "",
+      "ev_ebitda": "",
+      "ev_sales": "",
+      "dividend_yield": "%",
+      "fcf_yield": "%",
+      "earnings_yield": "%"
+    },
+    
+    "historical_valuation": {
+      "pe_5yr_avg": "",
+      "pe_5yr_high": "",
+      "pe_5yr_low": "",
+      "pe_10yr_avg": "",
+      "pb_5yr_avg": "",
+      "ev_ebitda_5yr_avg": "",
+      "current_vs_history": "Expensive/Fair/Cheap"
+    },
+    
+    "peer_comparison_table": {
+      "peers_selected": ["Ticker1", "Ticker2", "Ticker3", "Ticker4", "Ticker5"],
+      "selection_rationale": "Why these peers",
+      
+      "comparison_metrics": [
+        {
+          "metric": "Market Cap (₹ Cr)",
+          "company": "",
+          "peer_1": "",
+          "peer_2": "",
+          "peer_3": "",
+          "peer_4": "",
+          "peer_5": "",
+          "industry_avg": "",
+          "company_rank": "1st/2nd/etc."
+        },
+        {
+          "metric": "Revenue Growth YoY (%)",
+          "company": "",
+          "peer_1": "",
+          "peer_2": "",
+          "peer_3": "",
+          "peer_4": "",
+          "peer_5": "",
+          "industry_avg": "",
+          "company_rank": ""
+        },
+        {
+          "metric": "EBITDA Margin (%)",
+          "company": "",
+          "peer_1": "",
+          "peer_2": "",
+          "peer_3": "",
+          "peer_4": "",
+          "peer_5": "",
+          "industry_avg": "",
+          "company_rank": ""
+        },
+        {
+          "metric": "ROE (%)",
+          "company": "",
+          "peer_1": "",
+          "peer_2": "",
+          "peer_3": "",
+          "peer_4": "",
+          "peer_5": "",
+          "industry_avg": "",
+          "company_rank": ""
+        },
+        {
+          "metric": "ROCE (%)",
+          "company": "",
+          "peer_1": "",
+          "peer_2": "",
+          "peer_3": "",
+          "peer_4": "",
+          "peer_5": "",
+          "industry_avg": "",
+          "company_rank": ""
+        },
+        {
+          "metric": "P/E Ratio",
+          "company": "",
+          "peer_1": "",
+          "peer_2": "",
+          "peer_3": "",
+          "peer_4": "",
+          "peer_5": "",
+          "industry_avg": "",
+          "company_rank": ""
+        },
+        {
+          "metric": "EV/EBITDA",
+          "company": "",
+          "peer_1": "",
+          "peer_2": "",
+          "peer_3": "",
+          "peer_4": "",
+          "peer_5": "",
+          "industry_avg": "",
+          "company_rank": ""
+        },
+        {
+          "metric": "P/B Ratio",
+          "company": "",
+          "peer_1": "",
+          "peer_2": "",
+          "peer_3": "",
+          "peer_4": "",
+          "peer_5": "",
+          "industry_avg": "",
+          "company_rank": ""
+        },
+        {
+          "metric": "Debt/Equity",
+          "company": "",
+          "peer_1": "",
+          "peer_2": "",
+          "peer_3": "",
+          "peer_4": "",
+          "peer_5": "",
+          "industry_avg": "",
+          "company_rank": ""
+        },
+        {
+          "metric": "Dividend Yield (%)",
+          "company": "",
+          "peer_1": "",
+          "peer_2": "",
+          "peer_3": "",
+          "peer_4": "",
+          "peer_5": "",
+          "industry_avg": "",
+          "company_rank": ""
+        }
+      ],
+      
+      "relative_valuation_summary": {
+        "vs_peers_assessment": "Premium/Discount/In-line",
+        "premium_discount_percentage": "%",
+        "premium_discount_justified": "Yes/No/Partially",
+        "justification": "Why premium/discount is or isn't justified"
+      }
+    },
+    
+    "analyst_targets": {
+      "median_target_price": "₹",
+      "high_target": "₹",
+      "low_target": "₹",
+      "upside_to_median": "%",
+      "consensus_rating": "Strong Buy/Buy/Hold/Sell",
+      "analyst_count": ""
+    }
+  }
+}
+'''
+
+---
+
+## 14. AGGREGATE SCORES (ENHANCED)
+
+'''json
+{
+  "aggregate_scores": {
+    "overall_risk_score": {
+      "score_1_to_10": "",
+      "score_interpretation": "1=Lowest Risk, 10=Highest Risk",
+      "risk_grade": "Very Low Risk/Low/Moderate/High/Very High Risk"
+    },
+    "risk_component_scores": {
+      "financial_risk_score": {"score": "", "weight": 25, "key_drivers": "Leverage, Liquidity, Debt maturity"},
+      "business_risk_score": {"score": "", "weight": 20, "key_drivers": "Competition, Concentration, Cyclicality"},
+      "governance_risk_score": {"score": "", "weight": 15, "key_drivers": "Board, Promoter, RPT, Auditor"},
+      "regulatory_risk_score": {"score": "", "weight": 15, "key_drivers": "Compliance, Policy changes"},
+      "operational_risk_score": {"score": "", "weight": 15, "key_drivers": "Supply chain, Execution, Technology"},
+      "macro_sensitivity_score": {"score": "", "weight": 10, "key_drivers": "Currency, Interest rate, Commodity"}
+    },
+    "key_risk_drivers": ["Top 5-7 specific risks driving the score"],
+    "risk_trend": "Improving/Stable/Deteriorating",
+    
+    "overall_quality_score": {
+      "score_1_to_10": "",
+      "score_interpretation": "10=Highest Quality, 1=Lowest Quality",
+      "quality_grade": "Excellent/Good/Average/Below Average/Poor"
+    },
+    "quality_component_scores": {
+      "earnings_quality_score": {"score": "", "key_factors": "Cash conversion, Accruals, Consistency"},
+      "balance_sheet_quality_score": {"score": "", "key_factors": "Leverage, Liquidity, Asset quality"},
+      "management_quality_score": {"score": "", "key_factors": "Track record, Capital allocation, Communication"},
+      "governance_quality_score": {"score": "", "key_factors": "Board independence, Transparency"},
+      "competitive_position_score": {"score": "", "key_factors": "Market share, Pricing power, Barriers"}
+    },
+    "quality_trend": "Improving/Stable/Deteriorating",
+    
+    "moat_assessment": {
+      "moat_exists": "Yes/No",
+      "moat_type": "Wide/Narrow/None",
+      "moat_score_1_to_10": "",
+      "moat_sources_breakdown": [
+        {
+          "moat_source": "Brand",
+          "strength": "Strong/Moderate/Weak/None",
+          "score_contribution": "",
+          "evidence": "Specific evidence for this moat"
+        },
+        {
+          "moat_source": "Cost Leadership",
+          "strength": "",
+          "score_contribution": "",
+          "evidence": ""
+        },
+        {
+          "moat_source": "Network Effects",
+          "strength": "",
+          "score_contribution": "",
+          "evidence": ""
+        },
+        {
+          "moat_source": "Switching Costs",
+          "strength": "",
+          "score_contribution": "",
+          "evidence": ""
+        },
+        {
+          "moat_source": "Intangible Assets (Patents/Licenses)",
+          "strength": "",
+          "score_contribution": "",
+          "evidence": ""
+        },
+        {
+          "moat_source": "Efficient Scale",
+          "strength": "",
+          "score_contribution": "",
+          "evidence": ""
+        },
+        {
+          "moat_source": "Regulatory Protection",
+          "strength": "",
+          "score_contribution": "",
+          "evidence": ""
+        }
+      ],
+      "moat_trend": "Strengthening/Stable/Weakening/Eroding",
+      "moat_threats": ["What could erode the moat"]
+    }
+  }
+}
+'''
+
+---
+
+## 15. MARKET SENTIMENT INTELLIGENCE
+
+'''json
+{
+  "market_and_sentiment": {
+    "analyst_consensus": {
+      "analyst_coverage": {
+        "total_analysts_tracking": "",
+        "broker_names": ["Top brokers covering"],
+        "coverage_initiation_recent": ""
+      },
+      "consensus_recommendation": {
+        "consensus_rating": "Strong Buy/Buy/Hold/Sell/Strong Sell",
+        "buy_count": "",
+        "hold_count": "",
+        "sell_count": ""
+      },
+      "consensus_price_target": {
+        "median_target_price": "",
+        "highest_target": "",
+        "lowest_target": "",
+        "upside_to_median_target_percent": ""
+      },
+      "estimate_revisions": {
+        "eps_revision_trend_3m": "Upgrades/Downgrades/Stable",
+        "net_revision_direction": "Positive/Negative/Neutral"
+      }
+    },
+    
+    "news_sentiment": {
+      "lookback_days": 90,
+      "total_articles_analyzed": "",
+      "sentiment_score_composite": "-1 to 1",
+      "sentiment_classification": "Very Positive/Positive/Neutral/Negative/Very Negative",
+      "sentiment_momentum": "Improving/Stable/Deteriorating",
+      "top_positive_themes": [],
+      "top_negative_themes": []
+    },
+    
+    "technical_context": {
+      "price_current": "₹",
+      "52_week_high": "₹",
+      "52_week_low": "₹",
+      "distance_from_52w_high": "%",
+      "distance_from_52w_low": "%",
+      "all_time_high": "₹",
+      "distance_from_ath": "%",
+      "50_dma": "₹",
+      "200_dma": "₹",
+      "price_vs_50_dma": "Above/Below by X%",
+      "price_vs_200_dma": "Above/Below by X%",
+      "trend_short_term": "Bullish/Neutral/Bearish",
+      "trend_medium_term": "Bullish/Neutral/Bearish",
+      "support_levels": ["₹X", "₹Y"],
+      "resistance_levels": ["₹A", "₹B"],
+      "rsi_14": "",
+      "rsi_interpretation": "Overbought/Neutral/Oversold"
+    }
+  },
+  
+  "executive_social_and_volume": {
+    "ceo_social_activity": {
+      "twitter_x_handle": "",
+      "linkedin_url": "",
+      "posting_frequency": "Very Active/Active/Moderate/Rare/Inactive",
+      "recent_notable_posts": [],
+      "overall_tone_of_posts": "Bullish/Optimistic/Neutral/Cautious/Silent"
+    },
+    "trading_volume_analysis": {
+      "avg_daily_volume_10d": "",
+      "avg_daily_volume_90d": "",
+      "volume_trend": "Increasing/Stable/Decreasing",
+      "current_volume_vs_30d_avg": "X times",
+      "volume_spikes": []
+    }
+  }
+}
+'''
+
+---
+
+## 16. RELATED PARTY FORENSICS
+
+'''json
+{
+  "related_party_forensics": {
+    "rpt_summary": {
+      "total_rpt_value_fy": "₹ Cr",
+      "rpt_as_percent_of_revenue": "% (Red flag if >10%)",
+      "rpt_as_percent_of_net_worth": "%",
+      "rpt_trend_3yr": "Increasing/Stable/Decreasing",
+      "material_rpt_count": ""
+    },
+    
+    "key_related_party_transactions": [
+      {
+        "related_party_name": "",
+        "relationship": "Promoter Group/Subsidiary/Associate/KMP/Relative",
+        "transaction_type": "Purchase/Sale/Service/Loan/Royalty/Rent/Brand Fee/Guarantee",
+        "transaction_amount": "",
+        "is_arms_length": "Yes/No/Qualified",
+        "arms_length_justification": "",
+        "approval_method": "Audit Committee/Board/Shareholder/Omnibus",
+        "is_suspicious": "true if high value loan to promoter"
+      }
+    ],
+    
+    "loans_and_guarantees_to_rps": {
+      "loans_given_amount": "",
+      "guarantees_given_amount": "",
+      "interest_rate_charged": "% vs Market Rate",
+      "purpose_of_loan": ""
+    },
+    
+    "rpt_red_flags": {
+      "high_royalties_to_promoters": "true if >1% of sales",
+      "loans_to_promoter_entities": "true",
+      "purchase_from_promoter_at_premium": "true",
+      "sale_to_promoter_at_discount": "true",
+      "circular_transactions_suspected": "true",
+      "auditor_comments_on_rpt": ""
+    }
+  }
+}
+'''
+
+---
+
+## 17. M&A INTEGRATION & SYNERGY TRACKING
+
+'''json
+{
+  "ma_integration_and_synergies": {
+    "recent_acquisitions_tracking": [
+      {
+        "acquisition_name": "",
+        "acquisition_date": "",
+        "deal_value": "",
+        "synergy_type_targeted": "Revenue/Cost/Technology/Market Access",
+        "synergy_target_value": "",
+        "synergy_realization_actual": "",
+        "integration_status_score": "1-10",
+        "key_talent_retention": "High/Medium/Low",
+        "goodwill_on_balance_sheet": "",
+        "impairment_risk": "High/Medium/Low",
+        "performance_vs_deal_model": "Ahead/On Track/Behind/Failed"
+      }
+    ],
+    
+    "goodwill_analysis": {
+      "total_goodwill": "₹ Cr",
+      "goodwill_as_percent_of_net_worth": "",
+      "goodwill_impairment_history": [],
+      "impairment_risk_assessment": "Critical/High/Medium/Low"
+    },
+    
+    "ma_success_score": {
+      "score_1_to_10": "",
+      "rationale": ""
+    }
+  }
+}
+'''
+
+---
+
+## 18. INDUSTRY LINKAGE & RIPPLE EFFECTS (NEW)
+
+'''json
+{
+  "industry_linkage_and_ripple_effects": {
+    "industry_classification": {
+      "primary_industry": "",
+      "secondary_industries": [],
+      "industry_kg_reference": "Link to Industry KG"
+    },
+    
+    "sensitivity_to_industry_events": {
+      "industry_revenue_correlation": "High/Medium/Low",
+      "beta_to_sector_index": "",
+      "outperformer_underperformer": "Typically outperforms/underperforms sector in bull/bear"
+    },
+    
+    "ripple_effect_triggers": [
+      {
+        "industry_event_type": "RBI rate hike",
+        "impact_on_this_stock": "Positive/Negative/Neutral",
+        "impact_magnitude": "High/Medium/Low",
+        "impact_mechanism": "How the event affects this company",
+        "lag_effect": "Immediate/1-2 quarters/Longer",
+        "historical_example": "What happened last time"
+      },
+      {
+        "industry_event_type": "USFDA warning letter to competitor",
+        "impact_on_this_stock": "",
+        "impact_magnitude": "",
+        "impact_mechanism": "",
+        "lag_effect": "",
+        "historical_example": ""
+      },
+      {
+        "industry_event_type": "Commodity price spike",
+        "impact_on_this_stock": "",
+        "impact_magnitude": "",
+        "impact_mechanism": "",
+        "lag_effect": "",
+        "historical_example": ""
+      }
+    ],
+    
+    "cross_industry_linkages": [
+      {
+        "linked_industry": "Real Estate",
+        "linkage_type": "Demand driver/Supply chain/Competing for capital",
+        "correlation": "Positive/Negative",
+        "strength": "Strong/Moderate/Weak"
+      }
+    ],
+    
+    "macro_sensitivity_matrix": {
+      "interest_rate_sensitivity": {
+        "direction": "Positive/Negative/Neutral",
+        "magnitude": "High/Medium/Low",
+        "mechanism": "Why"
+      },
+      "currency_sensitivity": {
+        "direction": "",
+        "magnitude": "",
+        "mechanism": ""
+      },
+      "oil_price_sensitivity": {
+        "direction": "",
+        "magnitude": "",
+        "mechanism": ""
+      },
+      "inflation_sensitivity": {
+        "direction": "",
+        "magnitude": "",
+        "mechanism": ""
+      }
+    }
+  }
+}
+'''
+
+---
+
+## 19. KNOWLEDGE GRAPH SCHEMA (NEW)
+
+'''json
+{
+  "knowledge_graph_schema": {
+    "description": "Visual representation of how this company connects to other entities",
+    
+    "node_definition": {
+      "primary_node": {
+        "node_type": "Company",
+        "node_id": "ticker",
+        "properties": ["name", "sector", "market_cap", "revenue"]
+      }
+    },
+    
+    "connected_nodes": [
+      {
+        "node_type": "Subsidiary",
+        "node_ids": ["List of subsidiary tickers/names"],
+        "edge_type": "OWNS",
+        "edge_properties": ["ownership_percentage", "consolidation_method"]
+      },
+      {
+        "node_type": "Director",
+        "node_ids": ["List of DINs"],
+        "edge_type": "HAS_DIRECTOR",
+        "edge_properties": ["role", "tenure", "committees"]
+      },
+      {
+        "node_type": "Shareholder",
+        "node_ids": ["List of major shareholders"],
+        "edge_type": "HELD_BY",
+        "edge_properties": ["holding_percentage", "category"]
+      },
+      {
+        "node_type": "Customer",
+        "node_ids": ["List of named customers"],
+        "edge_type": "SELLS_TO",
+        "edge_properties": ["revenue_percentage", "contract_tenure"]
+      },
+      {
+        "node_type": "Supplier",
+        "node_ids": ["List of named suppliers"],
+        "edge_type": "BUYS_FROM",
+        "edge_properties": ["purchase_percentage", "material_type"]
+      },
+      {
+        "node_type": "Competitor",
+        "node_ids": ["List of competitor tickers"],
+        "edge_type": "COMPETES_WITH",
+        "edge_properties": ["segment", "intensity"]
+      },
+      {
+        "node_type": "Industry",
+        "node_ids": ["Primary and secondary industries"],
+        "edge_type": "BELONGS_TO",
+        "edge_properties": ["market_share", "ranking"]
+      },
+      {
+        "node_type": "PromoterGroup",
+        "node_ids": ["Promoter group name"],
+        "edge_type": "CONTROLLED_BY",
+        "edge_properties": ["holding_percentage", "pledge_percentage"]
+      },
+      {
+        "node_type": "Auditor",
+        "node_ids": ["Auditor firm name"],
+        "edge_type": "AUDITED_BY",
+        "edge_properties": ["tenure", "opinion_type"]
+      },
+      {
+        "node_type": "Lender",
+        "node_ids": ["List of lenders"],
+        "edge_type": "BORROWS_FROM",
+        "edge_properties": ["amount", "instrument_type", "rating"]
+      },
+      {
+        "node_type": "Regulator",
+        "node_ids": ["List of regulators: SEBI, RBI, etc."],
+        "edge_type": "REGULATED_BY",
+        "edge_properties": ["license_type", "compliance_status"]
+      }
+    ],
+    
+    "graph_traversal_examples": [
+      {
+        "query": "Find all companies with same promoter group",
+        "path": "Company -[CONTROLLED_BY]-> PromoterGroup <-[CONTROLLED_BY]- OtherCompany"
+      },
+      {
+        "query": "Find supply chain impact",
+        "path": "Company -[BUYS_FROM]-> Supplier -[SUPPLIES_TO]-> Competitor"
+      },
+      {
+        "query": "Find board network",
+        "path": "Company -[HAS_DIRECTOR]-> Director -[SITS_ON]-> OtherCompany"
+      }
+    ]
+  }
+}
+'''
+
+---
+
+# PART B: SECTOR-ADAPTIVE INTELLIGENCE
+
+## 20. SECTOR-SPECIFIC MODULES
+
+**INSTRUCTION:** Populate ONLY the relevant sector module. Set 'applicable: false' for all others.
+
+'''json
+{
+  "sector_adaptive_intelligence": {
+    "applicable_module": "banking|nbfc|insurance|it_services|pharma|auto|fmcg|telecom|power|realty|metals|cement|chemicals|oil_gas|capital_goods|textiles|sugar|paper|hospitality",
+    
+    "banking_module": {
+      "applicable": false,
+      "asset_quality": {
+        "gnpa_ratio": "%",
+        "nnpa_ratio": "%",
+        "gnpa_trend_4q": [],
+        "slippage_ratio": "%",
+        "credit_cost": "%",
+        "pcr": "%",
+        "restructured_book": "%",
+        "sma_1_2_percentage": "%",
+        "top_20_npa_exposures": []
+      },
+      "liability_franchise": {
+        "casa_ratio": "%",
+        "casa_trend": "",
+        "cost_of_deposits": "%",
+        "retail_deposit_share": "%"
+      },
+      "capital": {
+        "crar": "%",
+        "cet1": "%",
+        "tier1": "%",
+        "tier2": "%",
+        "capital_consumption": "%"
+      },
+      "profitability": {
+        "nim": "%",
+        "nim_trend": "",
+        "cost_to_income": "%",
+        "roa": "%",
+        "roe": "%"
+      },
+      "growth": {
+        "credit_growth": "%",
+        "deposit_growth": "%",
+        "retail_credit_growth": "%",
+        "corporate_credit_growth": "%"
+      },
+      "segment_book": {
+        "retail_share": "%",
+        "corporate_share": "%",
+        "sme_share": "%",
+        "agri_share": "%"
+      }
+    },
+    
+    "nbfc_module": {
+      "applicable": false,
+      "aum_metrics": {
+        "total_aum": "₹ Cr",
+        "aum_growth": "%",
+        "disbursement_growth": "%",
+        "on_book_off_book_ratio": ""
+      },
+      "asset_quality": {
+        "gnpa": "%",
+        "nnpa": "%",
+        "stage_2_assets": "%",
+        "stage_3_assets": "%",
+        "ecl_provision": "%",
+        "collection_efficiency": "%"
+      },
+      "funding": {
+        "cost_of_funds": "%",
+        "funding_mix": {},
+        "alm_profile": "",
+        "liquidity_buffer": ""
+      },
+      "capital": {
+        "crar": "%",
+        "tier1": "%",
+        "leverage_ratio": ""
+      }
+    },
+    
+    "insurance_module": {
+      "applicable": false,
+      "life_insurance": {
+        "gwp": "₹ Cr",
+        "gwp_growth": "%",
+        "nbp": "₹ Cr",
+        "nbp_growth": "%",
+        "vnb": "₹ Cr",
+        "vnb_margin": "%",
+        "apnb": "₹ Cr",
+        "persistency_13m": "%",
+        "persistency_61m": "%",
+        "embedded_value": "₹ Cr",
+        "roev": "%",
+        "solvency_ratio": "%",
+        "product_mix": {},
+        "channel_mix": {}
+      },
+      "general_insurance": {
+        "gdpi": "₹ Cr",
+        "gdpi_growth": "%",
+        "combined_ratio": "%",
+        "loss_ratio": "%",
+        "expense_ratio": "%",
+        "solvency_ratio": "%",
+        "segment_mix": {}
+      }
+    },
+    
+    "it_services_module": {
+      "applicable": false,
+      "revenue_metrics": {
+        "revenue_usd": "$ Mn",
+        "revenue_growth_cc": "%",
+        "revenue_growth_reported": "%"
+      },
+      "deal_metrics": {
+        "large_deal_tcv": "$ Mn",
+        "deal_count": "",
+        "deal_pipeline": "",
+        "order_book": ""
+      },
+      "operational": {
+        "utilization_rate": "%",
+        "offshore_onsite_mix": "",
+        "subcontracting_percentage": "%"
+      },
+      "talent": {
+        "total_headcount": "",
+        "headcount_growth": "%",
+        "attrition_ltm": "%",
+        "fresher_hiring": "",
+        "wage_hike": "%"
+      },
+      "client_metrics": {
+        "active_clients": "",
+        "client_concentration_top10": "%",
+        "million_dollar_clients": ""
+      },
+      "vertical_mix": {},
+      "geography_mix": {},
+      "service_line_mix": {
+        "digital_revenue_share": "%",
+        "digital_growth": "%"
+      }
+    },
+    
+    "pharma_module": {
+      "applicable": false,
+      "geography_mix": {
+        "us_revenue_share": "%",
+        "india_revenue_share": "%",
+        "europe_share": "%",
+        "emerging_markets_share": "%"
+      },
+      "us_business": {
+        "us_revenue": "$ Mn",
+        "us_growth": "%",
+        "price_erosion": "%",
+        "anda_filings_ytd": "",
+        "anda_approvals_ytd": "",
+        "anda_pipeline": "",
+        "first_to_file_count": "",
+        "para_iv_opportunities": ""
+      },
+      "india_business": {
+        "ipm_rank": "",
+        "ipm_growth_vs_market": "",
+        "chronic_acute_mix": "",
+        "field_force_size": "",
+        "mr_productivity": ""
+      },
+      "regulatory": {
+        "usfda_facilities_count": "",
+        "facilities_with_warning_letters": [],
+        "facilities_with_oai": [],
+        "facilities_with_vai": [],
+        "facilities_with_nai": [],
+        "recent_inspections": [],
+        "import_alerts": []
+      },
+      "r_and_d": {
+        "rd_spend": "₹ Cr",
+        "rd_to_sales": "%",
+        "pipeline_summary": "",
+        "biosimilar_pipeline": ""
+      },
+      "api_business": {
+        "api_revenue": "",
+        "api_contribution": "%",
+        "backward_integration_level": ""
+      }
+    },
+    
+    "auto_module": {
+      "applicable": false,
+      "sales_volumes": {
+        "total_volumes": "",
+        "volume_growth": "%",
+        "domestic_volumes": "",
+        "export_volumes": "",
+        "segment_wise": {}
+      },
+      "market_share": {
+        "overall_market_share": "%",
+        "segment_wise_share": {},
+        "market_share_trend": ""
+      },
+      "ev_transition": {
+        "ev_volumes": "",
+        "ev_share_of_sales": "%",
+        "ev_pipeline": "",
+        "ev_investment": ""
+      },
+      "operational": {
+        "capacity": "",
+        "capacity_utilization": "%",
+        "inventory_days_dealer": "",
+        "discount_levels": ""
+      },
+      "financials": {
+        "realization_per_vehicle": "₹",
+        "ebitda_per_vehicle": "₹"
+      }
+    },
+    
+    "fmcg_module": {
+      "applicable": false,
+      "growth": {
+        "volume_growth": "%",
+        "value_growth": "%",
+        "price_mix_contribution": "%"
+      },
+      "distribution": {
+        "direct_reach_outlets": "",
+        "direct_reach_growth": "%",
+        "rural_contribution": "%",
+        "urban_contribution": "%",
+        "modern_trade_share": "%",
+        "ecommerce_share": "%"
+      },
+      "category_wise": {},
+      "brand_health": {
+        "market_share_key_brands": {},
+        "brand_spends_to_sales": "%"
+      },
+      "input_costs": {
+        "key_raw_materials": [],
+        "rm_inflation_impact": ""
+      }
+    },
+    
+    "telecom_module": {
+      "applicable": false,
+      "subscribers": {
+        "total_subscribers_mn": "",
+        "subscriber_growth": "%",
+        "subscriber_market_share": "%",
+        "active_subscriber_ratio": "%"
+      },
+      "arpu": {
+        "blended_arpu": "₹",
+        "arpu_growth": "%",
+        "data_arpu": "₹",
+        "voice_arpu": "₹"
+      },
+      "data_metrics": {
+        "data_consumption_per_user_gb": "",
+        "data_traffic_growth": "%"
+      },
+      "network": {
+        "tower_count": "",
+        "4g_coverage": "%",
+        "5g_coverage": "%",
+        "fiber_home_passes": ""
+      },
+      "spectrum": {
+        "spectrum_holding_mhz": "",
+        "spectrum_liability": "₹ Cr",
+        "spectrum_renewal_due": ""
+      }
+    },
+    
+    "power_module": {
+      "applicable": false,
+      "capacity": {
+        "total_capacity_mw": "",
+        "thermal_mw": "",
+        "renewable_mw": "",
+        "hydro_mw": ""
+      },
+      "generation": {
+        "generation_bu": "",
+        "plf": "%",
+        "renewable_cuf": "%"
+      },
+      "fuel": {
+        "coal_linkage_percentage": "%",
+        "coal_cost_per_unit": "₹",
+        "fuel_supply_security": ""
+      },
+      "tariff": {
+        "average_tariff": "₹/kWh",
+        "ppa_vs_merchant_mix": "",
+        "ppa_expiry_schedule": ""
+      },
+      "receivables": {
+        "discom_receivables": "₹ Cr",
+        "receivable_days": "",
+        "state_wise_exposure": {}
+      }
+    },
+    
+    "realty_module": {
+      "applicable": false,
+      "sales": {
+        "presales_value": "₹ Cr",
+        "presales_volume_sqft": "",
+        "presales_growth": "%",
+        "collections": "₹ Cr"
+      },
+      "launches": {
+        "new_launches_value": "₹ Cr",
+        "new_launches_sqft": ""
+      },
+      "inventory": {
+        "completed_inventory": "₹ Cr",
+        "under_construction": "₹ Cr",
+        "inventory_months": ""
+      },
+      "pricing": {
+        "average_realization_psf": "₹",
+        "pricing_trend": ""
+      },
+      "land_bank": {
+        "total_land_bank_acres": "",
+        "development_potential_sqft": "",
+        "land_cost": "₹ Cr"
+      },
+      "geography_mix": {},
+      "segment_mix": {
+        "residential_share": "%",
+        "commercial_share": "%",
+        "affordable_share": "%"
+      }
+    },
+    
+    "metals_module": {
+      "applicable": false,
+      "production": {
+        "crude_steel_production_mt": "",
+        "production_growth": "%",
+        "capacity_utilization": "%"
+      },
+      "pricing": {
+        "realization_per_ton": "₹",
+        "realization_change": "%",
+        "hrc_price": "₹/ton",
+        "spread_over_rm": "₹/ton"
+      },
+      "costs": {
+        "coking_coal_cost": "$/ton",
+        "iron_ore_cost": "₹/ton",
+        "conversion_cost": "₹/ton"
+      },
+      "integration": {
+        "iron_ore_captive_share": "%",
+        "coal_captive_share": "%",
+        "power_captive_share": "%"
+      },
+      "product_mix": {
+        "flat_products_share": "%",
+        "long_products_share": "%",
+        "value_added_share": "%"
+      }
+    },
+    
+    "cement_module": {
+      "applicable": false,
+      "capacity": {
+        "cement_capacity_mtpa": "",
+        "clinker_capacity": "",
+        "grinding_capacity": "",
+        "expansion_pipeline": ""
+      },
+      "volumes": {
+        "sales_volume_mt": "",
+        "volume_growth": "%",
+        "capacity_utilization": "%"
+      },
+      "realization": {
+        "realization_per_ton": "₹",
+        "realization_growth": "%"
+      },
+      "costs": {
+        "power_fuel_cost_per_ton": "₹",
+        "freight_cost_per_ton": "₹",
+        "total_cost_per_ton": "₹"
+      },
+      "profitability": {
+        "ebitda_per_ton": "₹",
+        "ebitda_per_ton_trend": ""
+      },
+      "geography_mix": {}
+    },
+    
+    "chemicals_module": {
+      "applicable": false,
+      "segment_mix": {
+        "specialty_share": "%",
+        "commodity_share": "%"
+      },
+      "product_portfolio": {},
+      "customer_mix": {
+        "agrochem_share": "%",
+        "pharma_share": "%",
+        "industrial_share": "%"
+      },
+      "export_share": "%",
+      "china_plus_one_benefit": {
+        "applicable": true,
+        "products_benefiting": [],
+        "market_share_gained": ""
+      },
+      "capex_cycle": {
+        "capex_underway": "₹ Cr",
+        "capacity_addition": "",
+        "commissioning_timeline": ""
+      },
+      "raw_material": {
+        "key_raw_materials": [],
+        "import_dependency": "%",
+        "rm_price_trend": ""
+      }
+    },
+    
+    "sugar_module": {
+      "applicable": false,
+      "crushing": {
+        "crushing_capacity_tcd": "",
+        "cane_crushed_mt": "",
+        "recovery_rate": "%",
+        "sugar_production_mt": ""
+      },
+      "sugar_business": {
+        "sugar_realization": "₹/quintal",
+        "sugar_inventory_mt": "",
+        "quota_allocation": ""
+      },
+      "ethanol_business": {
+        "distillery_capacity_klpd": "",
+        "ethanol_production_kl": "",
+        "ethanol_revenue_share": "%",
+        "ethanol_realization": "₹/liter",
+        "b_heavy_c_heavy_mix": ""
+      },
+      "cogen_business": {
+        "cogen_capacity_mw": "",
+        "power_exported_mu": "",
+        "power_tariff": "₹/unit"
+      },
+      "cane_economics": {
+        "sap_far": "₹/quintal",
+        "cane_cost_per_ton_sugar": "₹",
+        "cane_arrears": "₹ Cr"
+      }
+    },
+    
+    "textiles_module": {
+      "applicable": false,
+      "capacity": {
+        "spindle_capacity": "",
+        "loom_capacity": "",
+        "processing_capacity": "",
+        "garmenting_capacity": ""
+      },
+      "product_mix": {
+        "yarn_share": "%",
+        "fabric_share": "%",
+        "garments_share": "%",
+        "home_textiles_share": "%"
+      },
+      "raw_material": {
+        "cotton_consumption_bales": "",
+        "cotton_price_trend": "",
+        "cotton_inventory_months": "",
+        "polyester_psf_price": ""
+      },
+      "spreads": {
+        "yarn_spread": "₹/kg",
+        "fabric_spread": "₹/meter",
+        "spread_trend": ""
+      },
+      "export_share": "%",
+      "key_markets": []
+    },
+    
+    "paper_module": {
+      "applicable": false,
+      "capacity": {
+        "paper_capacity_tpa": "",
+        "paperboard_capacity": "",
+        "capacity_utilization": "%"
+      },
+      "product_mix": {
+        "writing_printing_share": "%",
+        "packaging_board_share": "%",
+        "specialty_paper_share": "%"
+      },
+      "raw_material": {
+        "wood_pulp_source": "Captive/Imported/Mixed",
+        "wood_pulp_cost_trend": "",
+        "wastepaper_share": "%",
+        "wastepaper_price_trend": ""
+      },
+      "realization": {
+        "realization_per_ton": "₹",
+        "realization_trend": ""
+      },
+      "costs": {
+        "fiber_cost_per_ton": "₹",
+        "energy_cost_per_ton": "₹",
+        "chemical_cost_per_ton": "₹"
+      },
+      "import_competition": {
+        "import_share_in_market": "%",
+        "anti_dumping_duty": ""
+      }
+    }
+  }
+}
+'''
+
+---
+
+## 21. AUTO-FLAGGED RED FLAGS
+
+'''json
+{
+  "auto_flagged_red_flags": [
+    {
+      "flag_id": "RF001",
+      "category": "Governance/Financial/Operational/Regulatory/Management/Ownership",
+      "flag_type": "Auditor Resignation/CFO Exit/Promoter Pledge/Rating Downgrade/etc.",
+      "severity": "Critical/High/Medium/Low",
+      "description": "Detailed description of the red flag",
+      "date_identified": "",
+      "source": "Where this was found",
+      "quantification": "₹ or % impact if applicable",
+      "management_response": "If any",
+      "monitoring_required": true,
+      "related_flags": ["Other flag IDs if connected"]
+    }
+  ]
+}
+'''
+
+---
+
+## 22. DATA GAPS AND CONFLICTS
+
+'''json
+{
+  "data_gaps_and_conflicts": {
+    "missing_critical_fields": [
+      {
+        "field_name": "",
+        "section": "",
+        "importance": "Critical/High/Medium",
+        "reason_missing": "",
+        "alternative_source_to_check": ""
+      }
+    ],
+    "source_conflicts": [
+      {
+        "field_name": "",
+        "source_1": "",
+        "source_1_value": "",
+        "source_2": "",
+        "source_2_value": "",
+        "resolution": "Which one was chosen and why"
+      }
+    ],
+    "recency_warnings": [
+      {
+        "field_name": "",
+        "data_date": "",
+        "may_be_outdated_because": ""
+      }
+    ],
+    "low_confidence_estimates": [
+      {
+        "field_name": "",
+        "estimated_value": "",
+        "confidence": "Low",
+        "basis_for_estimate": ""
+      }
+    ]
+  }
+}
+'''
+
+---
+
+# FINAL CHECKLIST
+
+Before submitting, verify:
+
+□ All mandatory sections populated
+□ All tickers are valid NSE symbols
+□ All amounts have currency (₹/$/€) and units (Cr/Mn/Bn)
+□ All percentages marked with %
+□ All dates in standard format
+□ North star metrics populated
+□ Peer comparison table has 5+ peers
+□ Moat score breakdown complete
+□ Industry linkage section populated
+□ KG schema with node/edge definitions
+□ Forex exposure section for exporters
+□ All sector-specific modules checked (only 1 applicable)
+□ Red flags actively hunted and populated
+□ Data gaps honestly documented
+
+---
+
+**NOW EXTRACT THE COMPREHENSIVE KNOWLEDGE GRAPH FOR THE MENTIONED COMPANY**
+
+***
+CRITICAL OUTPUT FORMATTING INSTRUCTION:
+You must output the final JSON object strictly sandwiched between two specific delimiters. 
+1. Do not use Markdown code blocks (json). 
+2. Do not add conversational text before or after the delimiters.
+3. Ensure the JSON is complete and valid.
+
+REQUIRED OUTPUT FORMAT:
+<<<JSON_START>>>
+{
+  ... your full json data here ...
+}
+<<<JSON_END>>>`;

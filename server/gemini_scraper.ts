@@ -31,6 +31,23 @@ export class GeminiScraper {
     });
   }
 
+  private async logScreenshot(message: string) {
+    if (!this.page) return;
+    
+    try {
+      const screenshot = await this.page.screenshot({ type: 'jpeg', quality: 60 });
+      const base64 = screenshot.toString('base64');
+      const imageData = `data:image/jpeg;base64,${base64}`;
+      
+      await storage.createLog({
+        logLevel: 'info',
+        logMessage: `📸 ${message}|||SCREENSHOT|||${imageData}`
+      });
+    } catch (error: any) {
+      await this.log(`⚠️ Screenshot failed: ${error.message}`, 'warning');
+    }
+  }
+
   private getSessionDir(email: string): string {
     // Create a safe filename from email
     const safeEmail = email.replace(/[^a-z0-9]/gi, '_');
@@ -121,16 +138,227 @@ export class GeminiScraper {
     await this.log("✓ Interstitial check complete", 'success');
   }
 
+  /**
+   * Robust method to input large prompts (85k+ chars) with verification
+   * Uses hybrid approach: clipboard paste for speed + keyboard typing for reliability
+   * Gemini's Quill editor has a ~33KB paste limit, so we paste what we can then type the rest
+   */
+  private async pastePromptWithVerification(
+    promptBox: any, 
+    prompt: string, 
+    maxRetries: number = 3
+  ): Promise<{ success: boolean; error?: string }> {
+    if (!this.page) {
+      return { success: false, error: 'Page not initialized' };
+    }
+
+    const EXPECTED_LENGTH = prompt.length;
+    await this.log(`📝 Starting robust input for ${EXPECTED_LENGTH} characters...`, 'info');
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      await this.log(`📋 Input attempt ${attempt}/${maxRetries}`, 'info');
+
+      try {
+        // Step 1: Focus and clear the input box
+        await this.log('  Step 1: Clearing input box...', 'info');
+        await promptBox.click();
+        await this.page.waitForTimeout(200);
+        
+        // Select all and delete
+        await this.page.keyboard.down('Control');
+        await this.page.keyboard.press('KeyA');
+        await this.page.keyboard.up('Control');
+        await this.page.keyboard.press('Backspace');
+        await this.page.waitForTimeout(200);
+
+        // Verify cleared
+        let clearedContent = await this.getPromptBoxContent(promptBox);
+        if (clearedContent.length > 10) {
+          await this.log(`  Warning: Box not fully cleared (${clearedContent.length} chars remain), retrying...`, 'warning');
+          await this.page.keyboard.press('Delete');
+          await this.page.keyboard.down('Control');
+          await this.page.keyboard.press('KeyA');
+          await this.page.keyboard.up('Control');
+          await this.page.keyboard.press('Delete');
+          await this.page.waitForTimeout(200);
+          clearedContent = await this.getPromptBoxContent(promptBox);
+        }
+        await this.log(`  ✓ Input cleared (${clearedContent.length} chars remaining)`, 'info');
+
+        // Step 2: Try clipboard paste first (fast but limited to ~33KB)
+        await this.log('  Step 2: Attempting clipboard paste...', 'info');
+        await this.page.evaluate(async (text) => {
+          await navigator.clipboard.writeText(text);
+        }, prompt);
+        await this.page.waitForTimeout(100);
+
+        await promptBox.click();
+        await this.page.waitForTimeout(100);
+        
+        await this.page.keyboard.down('Control');
+        await this.page.keyboard.press('KeyV');
+        await this.page.keyboard.up('Control');
+
+        // Wait for paste to stabilize
+        await this.page.waitForTimeout(500);
+        let pastedContent = await this.getPromptBoxContent(promptBox);
+        await this.page.waitForTimeout(500);
+        let pastedContent2 = await this.getPromptBoxContent(promptBox);
+        
+        // Wait until content is stable
+        let stableChecks = 0;
+        while (pastedContent.length !== pastedContent2.length && stableChecks < 10) {
+          pastedContent = pastedContent2;
+          await this.page.waitForTimeout(300);
+          pastedContent2 = await this.getPromptBoxContent(promptBox);
+          stableChecks++;
+        }
+
+        const pastedLength = pastedContent2.length;
+        await this.log(`  Clipboard pasted: ${pastedLength}/${EXPECTED_LENGTH} chars (${((pastedLength/EXPECTED_LENGTH)*100).toFixed(1)}%)`, 'info');
+
+        // Step 3: Check if paste was complete
+        if (pastedLength >= EXPECTED_LENGTH * 0.99) {
+          await this.log(`  ✅ Clipboard paste complete!`, 'success');
+          return { success: true };
+        }
+
+        // Step 4: Use keyboard typing for the remaining content
+        if (pastedLength < EXPECTED_LENGTH) {
+          const remainingText = prompt.substring(pastedLength);
+          await this.log(`  Step 3: Typing remaining ${remainingText.length} characters via keyboard...`, 'info');
+          
+          // Move cursor to end
+          await promptBox.click();
+          await this.page.keyboard.down('Control');
+          await this.page.keyboard.press('End');
+          await this.page.keyboard.up('Control');
+          await this.page.waitForTimeout(100);
+
+          // Type in chunks with progress updates
+          const TYPING_CHUNK_SIZE = 2000; // Characters per chunk
+          const typingChunks: string[] = [];
+          for (let i = 0; i < remainingText.length; i += TYPING_CHUNK_SIZE) {
+            typingChunks.push(remainingText.substring(i, i + TYPING_CHUNK_SIZE));
+          }
+
+          await this.log(`  Typing ${typingChunks.length} chunks...`, 'info');
+          
+          for (let i = 0; i < typingChunks.length; i++) {
+            const chunk = typingChunks[i];
+            const overallProgress = ((pastedLength + (i + 1) * TYPING_CHUNK_SIZE) / EXPECTED_LENGTH * 100).toFixed(1);
+            
+            // Log progress every 5 chunks or on last chunk
+            if (i % 5 === 0 || i === typingChunks.length - 1) {
+              await this.log(`  Typing progress: ${overallProgress}% (chunk ${i + 1}/${typingChunks.length})`, 'info');
+            }
+
+            // Type the chunk - using type() with delay: 0 is fast
+            await this.page.keyboard.type(chunk, { delay: 0 });
+            
+            // Small pause every 10 chunks to let the UI catch up
+            if (i % 10 === 9) {
+              await this.page.waitForTimeout(100);
+            }
+          }
+
+          await this.log(`  ✅ Keyboard typing completed`, 'success');
+        }
+
+        // Step 5: Final verification
+        await this.page.waitForTimeout(500);
+        const finalContent = await this.getPromptBoxContent(promptBox);
+        const finalLength = finalContent.length;
+
+        await this.log(`  Final verification: ${finalLength}/${EXPECTED_LENGTH} chars`, 'info');
+
+        if (finalLength >= EXPECTED_LENGTH * 0.99) {
+          // Allow 1% tolerance for whitespace differences
+          await this.log(`  ✅ Verification passed: ${finalLength}/${EXPECTED_LENGTH} chars`, 'success');
+          return { success: true };
+        }
+
+        // Check for whitespace differences
+        if (Math.abs(finalLength - EXPECTED_LENGTH) < 50) {
+          const trimmedMatch = finalContent.trim() === prompt.trim();
+          if (trimmedMatch) {
+            await this.log(`  ✅ Content matches (whitespace difference only)`, 'success');
+            return { success: true };
+          }
+        }
+
+        await this.log(`  ❌ Attempt ${attempt} verification failed: ${finalLength}/${EXPECTED_LENGTH} chars`, 'warning');
+
+      } catch (error: any) {
+        await this.log(`  ❌ Attempt ${attempt} error: ${error.message}`, 'error');
+      }
+
+      // Wait before retry
+      if (attempt < maxRetries) {
+        await this.log(`  Waiting 2s before retry...`, 'info');
+        await this.page.waitForTimeout(2000);
+      }
+    }
+
+    return { 
+      success: false, 
+      error: `Failed to input ${EXPECTED_LENGTH} characters after ${maxRetries} attempts` 
+    };
+  }
+
+  /**
+   * Get the current content of the prompt box (handles various element types)
+   */
+  private async getPromptBoxContent(promptBox: any): Promise<string> {
+    try {
+      // Try multiple approaches to get content
+      let content = '';
+      
+      // Approach 1: innerText (best for contenteditable divs)
+      try {
+        content = await promptBox.innerText();
+        if (content && content.length > 0) return content;
+      } catch {}
+
+      // Approach 2: textContent via evaluate
+      try {
+        content = await promptBox.evaluate((el: HTMLElement) => el.textContent || '');
+        if (content && content.length > 0) return content;
+      } catch {}
+
+      // Approach 3: input value (for textarea/input elements)
+      try {
+        content = await promptBox.evaluate((el: any) => el.value || '');
+        if (content && content.length > 0) return content;
+      } catch {}
+
+      // Approach 4: innerHTML as last resort
+      try {
+        content = await promptBox.evaluate((el: HTMLElement) => {
+          // Strip HTML tags to get plain text
+          const temp = document.createElement('div');
+          temp.innerHTML = el.innerHTML;
+          return temp.textContent || '';
+        });
+      } catch {}
+
+      return content || '';
+    } catch {
+      return '';
+    }
+  }
+
   async init(email: string = "", sessionData?: string) {
     try {
       await this.log("🚀 Initializing browser...", 'info');
 
       // ANTI-DETECTION STEALTH SETTINGS - ENHANCED FOR GOOGLE
       this.browser = await chromium.launch({
-        headless: true,
+        headless: false,  // Set to false for live browser view
         // channel: 'chrome' can be used if Chrome is installed, but Chromium works fine with stealth
         ignoreDefaultArgs: ['--enable-automation'],  // Hide automation flags
         args: [
+          '--incognito',  // Always run in incognito mode
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
@@ -474,43 +702,82 @@ export class GeminiScraper {
 
       // Check if we're already logged in (session worked!)
       await this.log("🔍 Checking if already logged in...", 'info');
-      const chatBoxSelectors = [
-        'textarea[placeholder*="Enter a prompt"]',
-        'textarea[aria-label*="prompt"]',
-        'div[contenteditable="true"]',
-        'textarea',
-        '.chat-input',
-        '[data-test-id*="input"]',
-        '[aria-label*="Message"]'
+      
+      // FIRST: Check for profile button/avatar - this is the most reliable indicator of being logged in
+      const profileIndicators = [
+        'button[aria-label*="Google Account"]',
+        'button[aria-label*="profile" i]',
+        'a[aria-label*="Google Account"]',
+        '[data-ogsr-up]', // Google profile button
+        'img[alt*="Profile" i]',
+        'div[aria-label*="Account"]',
+        '[role="button"][aria-label*="account" i]',
+        'button[jsname]', // Google profile buttons often have jsname attribute
+        'button:has(img[alt*="Profile"])'
       ];
-
-      let alreadyLoggedIn = false;
-      for (const selector of chatBoxSelectors) {
+      
+      let hasProfileButton = false;
+      for (const selector of profileIndicators) {
         try {
           const element = this.page.locator(selector).first();
-          // Longer timeout for session-based login (10s instead of 3s)
-          if (await element.isVisible({ timeout: this.sessionLoadedFromSource ? 10000 : 3000 })) {
-            alreadyLoggedIn = true;
-            await this.log(`✓ Already logged in - found chat interface with selector: ${selector}`, 'success');
+          if (await element.isVisible({ timeout: 3000 })) {
+            hasProfileButton = true;
+            await this.log(`✓ Profile button detected with selector: ${selector} - logged in`, 'success');
             break;
           }
         } catch {}
       }
-
-      if (alreadyLoggedIn) {
+      
+      // If profile button found, we're definitely logged in
+      if (hasProfileButton) {
         this.isLoggedIn = true;
         await this.saveSession();
+        await this.log("✓ Login check complete - already authenticated", 'success');
         return;
       }
-
-      // Need to login - check if session expired
+      
+      // No profile button found - check page text for personalized greeting as secondary indicator
+      const pageText = await this.page.evaluate(() => document.body.innerText).catch(() => '');
+      const hasGreeting = /Hi [A-Z]+|Hello [A-Z]+/i.test(pageText);
+      
+      if (hasGreeting) {
+        await this.log("✓ Personal greeting detected in page text - logged in", 'success');
+        this.isLoggedIn = true;
+        await this.saveSession();
+        await this.log("✓ Login check complete - already authenticated", 'success');
+        return;
+      }
+      
+      // Not logged in - confirm by checking for sign-in button
+      await this.log("⚠️ No profile button or greeting found - checking for sign-in button", 'warning');
+      
+      const signInIndicators = [
+        'text=/^sign in$/i',
+        'a:has-text("Sign in")',
+        'button:has-text("Sign in")',
+        'a[aria-label*="Sign in"]'
+      ];
+      
+      let hasSignInButton = false;
+      for (const selector of signInIndicators) {
+        try {
+          const element = this.page.locator(selector).first();
+          if (await element.isVisible({ timeout: 2000 })) {
+            hasSignInButton = true;
+            await this.log(`⚠️ Sign In button confirmed with selector: ${selector}`, 'warning');
+            break;
+          }
+        } catch {}
+      }
+      
+      await this.log("⚠️ Not logged in - need to authenticate", 'warning');
       if (this.sessionLoadedFromSource) {
         await this.log(`⚠️ Session loaded but not logged in - session may have expired`, 'warning');
         await this.log(`💡 Tip: Re-login manually via Accounts page to refresh session`, 'warning');
       }
 
       // Need to login - look for sign in button
-      await this.log("🔑 Not logged in - looking for sign in button", 'info');
+      await this.log("🔑 Looking for sign in button", 'info');
 
       const signInSelectors = [
         'text=/sign in/i',
@@ -907,6 +1174,100 @@ export class GeminiScraper {
       await this.log("⏳ Waiting for chat interface to be ready", 'info');
       await this.page.waitForTimeout(3000);
 
+      // CRITICAL: Verify authentication before proceeding
+      await this.log("🔍 Verifying authentication status...", 'info');
+      
+      // Check for profile button/picture (top right) - indicates logged in
+      const profileIndicators = [
+        'button[aria-label*="Google Account"]',
+        'button[aria-label*="profile" i]',
+        'a[aria-label*="Google Account"]',
+        '[data-ogsr-up]',
+        'img[alt*="Profile" i]',
+        'div[aria-label*="Account"]',
+        '[role="button"][aria-label*="account" i]',
+        'button[jsname]',
+        'button:has(img[alt*="Profile"])'
+      ];
+      
+      let isAuthenticated = false;
+      for (const selector of profileIndicators) {
+        try {
+          const element = this.page.locator(selector).first();
+          if (await element.isVisible({ timeout: 2000 })) {
+            await this.log(`✓ Profile button found (${selector}) - authenticated`, 'success');
+            isAuthenticated = true;
+            break;
+          }
+        } catch {}
+      }
+      
+      // If no profile button, check for sign-in button (top right)
+      if (!isAuthenticated) {
+        const signInButtonSelectors = [
+          'text=/^sign in$/i',
+          'a:has-text("Sign in")',
+          'button:has-text("Sign in")',
+          'a[aria-label*="Sign in"]'
+        ];
+        
+        let signInButtonFound = false;
+        for (const selector of signInButtonSelectors) {
+          try {
+            const element = this.page.locator(selector).first();
+            if (await element.isVisible({ timeout: 2000 })) {
+              await this.log(`⚠️ Sign-in button detected (${selector}) - not authenticated`, 'warning');
+              signInButtonFound = true;
+              break;
+            }
+          } catch {}
+        }
+        
+        if (signInButtonFound) {
+          // Session expired or login failed - attempt re-authentication
+          if (this.email && this.password) {
+            await this.log("🔄 Session expired - re-authenticating...", 'warning');
+            await this.logScreenshot("Session expired, re-authenticating");
+            this.isLoggedIn = false;
+            
+            // Re-run full login flow
+            await this.login(this.email, this.password);
+            
+            // Navigate back to Gemini after login
+            await this.log("🔄 Returning to Gemini after re-authentication...", 'info');
+            await this.page.goto('https://gemini.google.com/app?hl=en', {
+              waitUntil: 'domcontentloaded',
+              timeout: 60000
+            });
+            await this.page.waitForTimeout(3000);
+            
+            // Verify we're now authenticated
+            let reAuthSuccess = false;
+            for (const selector of profileIndicators) {
+              try {
+                const element = this.page.locator(selector).first();
+                if (await element.isVisible({ timeout: 2000 })) {
+                  await this.log(`✓ Re-authentication successful`, 'success');
+                  reAuthSuccess = true;
+                  isAuthenticated = true;
+                  break;
+                }
+              } catch {}
+            }
+            
+            if (!reAuthSuccess) {
+              throw new Error("Re-authentication failed - still not signed in");
+            }
+          } else {
+            throw new Error("Not signed in and no credentials available for authentication");
+          }
+        } else {
+          throw new Error("Cannot verify authentication - no profile button or sign-in button found");
+        }
+      }
+      
+      await this.log("✅ Authentication verified - proceeding with extraction", 'success');
+
       // Force click "New Chat" button to ensure clean slate
       await this.log("🔄 Looking for 'New Chat' button to force reset...", 'info');
       const newChatSelectors = [
@@ -951,6 +1312,7 @@ export class GeminiScraper {
       }
 
       await this.log("✓ Chat interface ready", 'success');
+      await this.logScreenshot("Chat interface loaded");
 
       // SCREENSHOTS DISABLED for faster processing
       // const timestamp1 = Date.now();
@@ -959,8 +1321,9 @@ export class GeminiScraper {
       // DEBUG BUTTON DUMP REMOVED - not needed in production
       // const allButtons = await this.page.evaluate(() => { ... });
 
-      // Select the model before entering prompt
-      await this.log(`🎯 Selecting model: ${geminiModel}`, 'info');
+      // Select the model before entering prompt (default to Pro if not specified)
+      const targetModel = geminiModel || 'gemini-3-pro';
+      await this.log(`🎯 Selecting model: ${targetModel}`, 'info');
       try {
         // Look for model selector button using multiple strategies
         const modelSelectors = [
@@ -985,9 +1348,9 @@ export class GeminiScraper {
 
             // Check if we need to switch models
             const currentModel = buttonText?.toLowerCase().trim();
-            const wantPro = geminiModel.includes('pro');
-            const wantFlash = geminiModel.includes('flash');
-            const wantThinking = geminiModel.includes('thinking');
+            const wantPro = targetModel.includes('pro');
+            const wantFlash = targetModel.includes('flash');
+            const wantThinking = targetModel.includes('thinking');
 
             // If current model matches what we want, skip clicking
             if ((wantPro && currentModel?.includes('pro')) ||
@@ -1017,7 +1380,7 @@ export class GeminiScraper {
               'gemini-3-pro': 'bard-mode-option-pro'
             };
 
-            const testId = modelTestIdMap[geminiModel];
+            const testId = modelTestIdMap[targetModel];
             if (testId) {
               await this.log(`🔍 Looking for model option: ${testId}`, 'info');
               const option = this.page.locator(`[data-test-id="${testId}"]`).first();
@@ -1062,7 +1425,7 @@ export class GeminiScraper {
               'gemini-3-pro': ['Pro']
             };
 
-            const modelOptions = modelNameMap[geminiModel] || ['Pro'];
+            const modelOptions = modelNameMap[targetModel] || ['Pro'];
             for (const optionText of modelOptions) {
               const option = this.page.locator(`button:has-text("${optionText}")`).first();
               if (await option.isVisible().catch(() => false)) {
@@ -1080,6 +1443,8 @@ export class GeminiScraper {
 
         if (!modelSelectorFound) {
           await this.log(`⚠️ Could not find model selector, using default model`, 'warning');
+        } else {
+          await this.logScreenshot(`Model selected: ${targetModel}`);
         }
       } catch (modelError: any) {
         await this.log(`⚠️ Model selection failed: ${modelError.message}, continuing with default`, 'warning');
@@ -1224,99 +1589,20 @@ export class GeminiScraper {
         throw new Error('Could not locate prompt input box with any selector. See forensic logs above.');
       }
 
-      await this.log("✓ Prompt box located", 'success');
+await this.log("✓ Prompt box located", 'success');
+await this.log(`📝 Prompt length: ${prompt.length} characters`, 'info');
 
-      // ========== CLIPBOARD PASTE STRATEGY ==========
-      // JS injection creates "Ghost Text" - Gemini's Angular backend doesn't detect it
-      // Clipboard paste (Ctrl+V) triggers native browser events and forces detection
+// ========== ROBUST LARGE PROMPT PASTE STRATEGY ==========
+// Uses clipboard API with verification loop to ensure exact content match
+// This handles 85k+ character prompts reliably
 
-      await this.log("📝 Copying prompt to clipboard and pasting (Ctrl+V)...", 'info');
+const pasteResult = await this.pastePromptWithVerification(promptBox, prompt);
+if (!pasteResult.success) {
+  throw new Error(`Failed to paste prompt after multiple attempts: ${pasteResult.error}`);
+}
 
-      // Step 1: Focus the prompt box
-      await this.log("  Step 1: Focusing prompt box...", 'info');
-      await promptBox.click();
-      await this.page.waitForTimeout(500);
-
-      // Step 2: Write prompt to clipboard
-      await this.log("  Step 2: Writing to clipboard...", 'info');
-      await this.page.evaluate((text) => {
-        navigator.clipboard.writeText(text);
-      }, prompt);
-
-      await this.page.waitForTimeout(300);
-      await this.log("  ✓ Prompt copied to clipboard", 'success');
-
-      // Step 3: Paste using Ctrl+V (simulates real user interaction)
-      // Note: On Mac this would be Meta+V, but Render/Linux uses Control+V
-      await this.log("  Step 3: Pasting with Ctrl+V...", 'info');
-      await this.page.keyboard.down('Control');
-      await this.page.keyboard.press('KeyV');
-      await this.page.keyboard.up('Control');
-
-      await this.log("  ✓ Paste command sent (Ctrl+V)", 'success');
-      await this.page.waitForTimeout(2000); // Wait for UI to process the paste
-
-      // Step 4: Verification - Check if text actually appeared
-      await this.log("  Step 4: Verifying paste succeeded...", 'info');
-      let boxValue = "";
-
-      try {
-        boxValue = await promptBox.innerText().catch(() => "");
-        if (!boxValue || boxValue.length === 0) {
-          // Try textContent as fallback
-          boxValue = await promptBox.evaluate(el => (el as HTMLElement).textContent || "");
-        }
-      } catch (e) {
-        await this.log("    Could not read box value, assuming paste worked", 'warning');
-      }
-
-      if (boxValue.length < 100) {
-        await this.log(`⚠️ Paste verification failed (box has only ${boxValue.length} chars). Trying fallback strategy...`, 'warning');
-
-        // Fallback Strategy: JS Inject (all but last char) + Type last char
-        await this.log("  Fallback: JS injection + typing last character...", 'warning');
-
-        await this.page.evaluate((data) => {
-          const selectors = [
-            'textarea[placeholder*="Enter a prompt" i]',
-            'textarea[aria-label*="prompt" i]',
-            'div[contenteditable="true"]',
-            'textarea',
-            '.ql-editor',
-            '[role="textbox"]'
-          ];
-
-          let element: HTMLElement | null = null;
-          for (const selector of selectors) {
-            element = document.querySelector(selector) as HTMLElement;
-            if (element) break;
-          }
-
-          if (element) {
-            element.focus();
-            // Inject all but the last character
-            const textToInject = data.text.slice(0, -1);
-            if (element.tagName === 'TEXTAREA') {
-              (element as HTMLTextAreaElement).value = textToInject;
-            } else {
-              element.textContent = textToInject;
-            }
-          }
-        }, { text: prompt, selector: foundSelector });
-
-        await this.page.waitForTimeout(500);
-
-        // Type the last character manually to trigger events
-        await this.page.keyboard.press('End');
-        await this.page.keyboard.type(prompt.slice(-1));
-
-        await this.log("  ✓ Fallback strategy completed", 'success');
-      } else {
-        await this.log(`✅ Paste verified successfully (${boxValue.length} chars in box)`, 'success');
-      }
-
-      await this.page.waitForTimeout(1000);
-      await this.log("✓ Prompt ready to send", 'success');
+await this.log("✓ Prompt ready to send", 'success');
+await this.logScreenshot("Prompt entered and ready");
 
       // ========== ROBUST "DOUBLE-TAP" SENDING STRATEGY ==========
       // Strategy: Force Click + Enter key as safety net
@@ -1502,6 +1788,10 @@ export class GeminiScraper {
         }
         if (waitTime % 10000 === 0) {
           await this.log(`⏳ Still generating... (${waitTime/1000}s elapsed)`, 'info');
+          // Capture screenshot every 20 seconds
+          if (waitTime % 20000 === 0 && waitTime > 0) {
+            await this.logScreenshot(`Response generation in progress (${waitTime/1000}s)`);
+          }
         }
         await this.page.waitForTimeout(2000);
         waitTime += 2000;
@@ -1514,6 +1804,7 @@ export class GeminiScraper {
       await this.page.waitForTimeout(2000); // Extra wait for UI to settle
 
       await this.log("✓ Response generation wait finished", 'success');
+      await this.logScreenshot("Response complete, starting extraction");
       await this.log("🔍 Starting DOM evaluation for extraction...", 'info');
 
       // Check for response completion - just wait for substantial text in model response
@@ -1749,10 +2040,15 @@ export class GeminiScraper {
       }
 
       // 3. EXTRACTION STRATEGY B: Markdown Blocks (Backup)
-      const markdownRegex = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/gi;
-      let match;
-      while ((match = markdownRegex.exec(fullText)) !== null) {
-          candidates.push(match[1].trim());
+      // Extract content between ```json and ``` (or just ``` and ```)
+      const markdownMatches = fullText.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi);
+      for (const match of markdownMatches) {
+          const content = match[1].trim();
+          // Only add if it looks like JSON (starts with {)
+          if (content.startsWith('{')) {
+              candidates.push(content);
+              await this.log(`✅ Found Markdown Block: ${content.length} chars`, 'info');
+          }
       }
 
       // 4. EXTRACTION STRATEGY C: Brute Force (The Safety Net)

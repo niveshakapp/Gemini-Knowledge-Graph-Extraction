@@ -34,7 +34,7 @@ export async function registerRoutes(
     }),
     cookie: { 
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
-      secure: false, // Must be false on Replit unless custom domain with SSL is used
+      secure: false, // Set to true in production with HTTPS
       httpOnly: true,
       sameSite: "lax",
       path: "/"

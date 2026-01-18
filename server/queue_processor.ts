@@ -136,7 +136,7 @@ class QueueProcessor {
       await new Promise(r => setTimeout(r, 2000));
     }
   }
-
+  
   private async processTask(task: any, account: any): Promise<void> {
     const scraper = new GeminiScraper(); // Create new scraper instance for this task
 
